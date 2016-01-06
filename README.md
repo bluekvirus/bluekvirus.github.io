@@ -1,4 +1,4 @@
 bluekvirus.github.io
 ====================
 
-Tim Liu's Open Source activity press
+Tim Lauv's Open Source activity press.
