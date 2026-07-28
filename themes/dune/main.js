@@ -9,6 +9,7 @@ import { createTerrain } from './terrain.js';
 import { createWorm } from './worm.js';
 import { createProps } from './props.js';
 import { createHarvester } from './harvester.js';
+import { createTroops } from './troops.js';
 
 const FROZEN_TIME = 9; // elapsed seconds shown when prefers-reduced-motion
 const CAM_BASE = new THREE.Vector3(...LAYOUT.camBase);
@@ -69,6 +70,11 @@ export async function mount(container) {
   const harvester = createHarvester();
   scene.add(harvester.group);
   state.updaters.push(harvester);
+
+  const troops = createTroops();
+  scene.add(troops.group);
+  state.updaters.push(troops);
+  state.troops = troops;
 
   const worm = createWorm();
   scene.add(worm.group);
