@@ -19,8 +19,8 @@ test('corridor near origin is flatter than the far field', () => {
   let near = 0, far = 0, n = 0;
   for (let i = 0; i < 50; i++) {
     const a = (i / 50) * Math.PI * 2;
-    near += Math.abs(duneHeight(Math.cos(a) * 150, -250 + Math.sin(a) * 150));
-    far += Math.abs(duneHeight(Math.cos(a) * 1600, -250 + Math.sin(a) * 1600));
+    near += Math.abs(duneHeight(-20 + Math.cos(a) * 150, -270 + Math.sin(a) * 150));
+    far += Math.abs(duneHeight(-20 + Math.cos(a) * 1600, -270 + Math.sin(a) * 1600));
     n++;
   }
   assert.ok(near / n < far / n, `near avg ${near / n} should be < far avg ${far / n}`);

@@ -18,7 +18,7 @@ export function duneHeight(x, z) {
   h += 30 * valueNoise(x * 0.004, z * 0.004);
   h += 12 * valueNoise(x * 0.012, z * 0.012);
   h += 4 * valueNoise(x * 0.035, z * 0.035);
-  // flatten a corridor around the worm/sigil zone so the composition reads
-  const d = Math.min(1, Math.hypot(x, z + 250) / 900);
+  // flatten a corridor around the worksite so the harvester/battle reads
+  const d = Math.min(1, Math.hypot(x + 20, z + 270) / 900);
   return h * (0.35 + 0.65 * d);
 }

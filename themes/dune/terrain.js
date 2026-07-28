@@ -11,7 +11,8 @@ export function createTerrain() {
   const p = geo.attributes.position;
   for (let i = 0; i < p.count; i++) p.setY(i, duneHeight(p.getX(i), p.getZ(i)));
 
-  // Non-indexed + per-face colors = faceted low-poly shading, unlit (never blooms).
+  // Non-indexed + per-face colors = faceted low-poly look; real lighting shades it now,
+  // so vertex color is a subtle warm/cool tint only (compressed range).
   geo = geo.toNonIndexed();
   geo.computeVertexNormals();
   const pos = geo.attributes.position, nrm = geo.attributes.normal;
@@ -21,10 +22,15 @@ export function createTerrain() {
   const n = new THREE.Vector3(), c = new THREE.Color();
   for (let i = 0; i < pos.count; i += 3) {
     n.set(nrm.getX(i), nrm.getY(i), nrm.getZ(i));
-    const shade = Math.pow(Math.max(0, n.dot(sun)), 0.75);
-    c.copy(shadow).lerp(lit, shade);
+    const noiseShade = Math.pow(Math.max(0, n.dot(sun)), 0.75);
+    const tint = 0.35 + 0.35 * noiseShade;
+    c.copy(shadow).lerp(lit, tint);
     for (let k = 0; k < 3; k++) colors.set([c.r, c.g, c.b], (i + k) * 3);
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true }));
+  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    vertexColors: true, flatShading: true, roughness: 0.95, metalness: 0,
+  }));
+  mesh.receiveShadow = true;
+  return mesh;
 }

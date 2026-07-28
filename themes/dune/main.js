@@ -3,42 +3,23 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { COLORS } from './palette.js';
+import { LAYOUT } from './layout.js';
 import { showFallback } from '../../js/router.js';
 import { createTerrain } from './terrain.js';
 import { createWorm } from './worm.js';
-import { createSigils } from './sigils.js';
 import { createProps } from './props.js';
 
 const FROZEN_TIME = 9; // elapsed seconds shown when prefers-reduced-motion
-const CAM_BASE = new THREE.Vector3(0, 90, 260);
-const CAM_TARGET = new THREE.Vector3(0, 70, -500);
+const CAM_BASE = new THREE.Vector3(...LAYOUT.camBase);
+const CAM_TARGET = new THREE.Vector3(...LAYOUT.camTarget);
 
 const state = {
   renderer: null, scene: null, camera: null, composer: null, clock: null,
   rafId: 0, useComposer: true, reduced: false, small: false,
   pointer: { x: 0, y: 0, tx: 0, ty: 0 },
-  updaters: [], interactive: [], sigils: null,
+  updaters: [],
   fps: { frames: 0, t: 0, lowSeconds: 0, degraded: false },
 };
-
-const _raycaster = new THREE.Raycaster();
-const _ndc = new THREE.Vector2();
-
-function pick(e) {
-  if (!state.interactive.length) return null;
-  _ndc.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
-  _raycaster.setFromCamera(_ndc, state.camera);
-  const hit = _raycaster.intersectObjects(state.interactive)[0];
-  return hit ? hit.object : null;
-}
-
-function onClick(e) {
-  const m = pick(e);
-  if (!m) return;
-  const url = m.userData.url;
-  if (url.startsWith('mailto:')) window.location.href = url;
-  else window.open(url, '_blank', 'noopener');
-}
 
 export async function mount(container) {
   if (!supportsWebGL()) throw new Error('WebGL unavailable');
@@ -50,6 +31,8 @@ export async function mount(container) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, state.small ? 1 : 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   container.appendChild(renderer.domElement);
   renderer.domElement.addEventListener('webglcontextlost', (e) => {
     e.preventDefault();
@@ -58,27 +41,33 @@ export async function mount(container) {
   });
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(COLORS.horizon, 0.00055);
+  scene.fog = new THREE.FogExp2(COLORS.horizon, 0.00035);
 
   const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 8000);
   camera.position.copy(CAM_BASE);
 
   scene.add(buildSky(), buildStars(), ...buildMoons());
-  const sun = new THREE.DirectionalLight(COLORS.sunlight, 1.4);
-  sun.position.set(-600, 220, -400);
-  scene.add(sun, new THREE.AmbientLight(COLORS.sandShadow, 0.9));
+
+  const sun = new THREE.DirectionalLight(COLORS.sunlight, 3.2);
+  sun.position.set(-460, 170, -80);
+  sun.castShadow = true;
+  const shadowSize = state.small ? 1024 : 2048;
+  sun.shadow.mapSize.set(shadowSize, shadowSize);
+  sun.shadow.camera.left = -320;
+  sun.shadow.camera.right = 320;
+  sun.shadow.camera.top = 320;
+  sun.shadow.camera.bottom = -320;
+  sun.shadow.camera.near = 10;
+  sun.shadow.camera.far = 1000;
+  sun.shadow.bias = -0.0005;
+  sun.target.position.set(30, 0, -270);
+  scene.add(sun, sun.target);
+  scene.add(new THREE.HemisphereLight(COLORS.skyZenith, COLORS.dustTan, 0.38));
   scene.add(createTerrain());
 
   const worm = createWorm();
   scene.add(worm.group);
   state.updaters.push(worm);
-
-  const sigils = createSigils();
-  scene.add(sigils.group);
-  state.updaters.push(sigils);
-  state.sigils = sigils;
-  state.interactive = sigils.meshes;
-  renderer.domElement.addEventListener('click', onClick);
 
   const props = createProps({ small: state.small });
   scene.add(props.group);
@@ -88,7 +77,7 @@ export async function mount(container) {
   composer.addPass(new RenderPass(scene, camera));
   const bloomRes = new THREE.Vector2(window.innerWidth, window.innerHeight)
     .multiplyScalar(state.small ? 0.5 : 1);
-  composer.addPass(new UnrealBloomPass(bloomRes, 0.85, 0.55, 0.5));
+  composer.addPass(new UnrealBloomPass(bloomRes, 0.7, 0.55, 0.75));
 
   Object.assign(state, { renderer, scene, camera, composer, clock: new THREE.Clock() });
 
@@ -165,13 +154,6 @@ function onResize() {
 function onPointerMove(e) {
   state.pointer.tx = (e.clientX / window.innerWidth) * 2 - 1;
   state.pointer.ty = (e.clientY / window.innerHeight) * 2 - 1;
-  if (!state.sigils) return;
-  const m = pick(e);
-  state.sigils.setHover(m);
-  state.renderer.domElement.style.cursor = m ? 'pointer' : 'default';
-  const label = document.getElementById('hud-label');
-  label.hidden = !m;
-  label.textContent = m ? m.userData.label : '';
 }
 
 function startLoop() {
@@ -194,9 +176,9 @@ function tick() {
   state.pointer.x += (state.pointer.tx - state.pointer.x) * 0.05;
   state.pointer.y += (state.pointer.ty - state.pointer.y) * 0.05;
   state.camera.position.set(
-    CAM_BASE.x + 40 * Math.sin(elapsed * 0.05) + state.pointer.x * 18,
-    CAM_BASE.y + 6 * Math.sin(elapsed * 0.083) - state.pointer.y * 10,
-    CAM_BASE.z + 25 * Math.cos(elapsed * 0.04),
+    CAM_BASE.x + 12 * Math.sin(elapsed * 0.05) + state.pointer.x * 6,
+    CAM_BASE.y + 4 * Math.sin(elapsed * 0.083) - state.pointer.y * 4,
+    CAM_BASE.z + 8 * Math.cos(elapsed * 0.04),
   );
   state.camera.lookAt(CAM_TARGET);
 
