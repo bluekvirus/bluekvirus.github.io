@@ -4,6 +4,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { COLORS } from './palette.js';
 import { showFallback } from '../../js/router.js';
+import { createTerrain } from './terrain.js';
 
 const FROZEN_TIME = 9; // elapsed seconds shown when prefers-reduced-motion
 const CAM_BASE = new THREE.Vector3(0, 90, 260);
@@ -44,6 +45,7 @@ export async function mount(container) {
   const sun = new THREE.DirectionalLight(COLORS.sunlight, 1.4);
   sun.position.set(-600, 220, -400);
   scene.add(sun, new THREE.AmbientLight(COLORS.sandShadow, 0.9));
+  scene.add(createTerrain());
 
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
