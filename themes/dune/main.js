@@ -8,6 +8,7 @@ import { showFallback } from '../../js/router.js';
 import { createTerrain } from './terrain.js';
 import { createWorm } from './worm.js';
 import { createProps } from './props.js';
+import { createHarvester } from './harvester.js';
 
 const FROZEN_TIME = 9; // elapsed seconds shown when prefers-reduced-motion
 const CAM_BASE = new THREE.Vector3(...LAYOUT.camBase);
@@ -64,6 +65,10 @@ export async function mount(container) {
   scene.add(sun, sun.target);
   scene.add(new THREE.HemisphereLight(COLORS.skyZenith, COLORS.dustTan, 0.38));
   scene.add(createTerrain());
+
+  const harvester = createHarvester();
+  scene.add(harvester.group);
+  state.updaters.push(harvester);
 
   const worm = createWorm();
   scene.add(worm.group);
