@@ -6,6 +6,7 @@ import { COLORS } from './palette.js';
 import { showFallback } from '../../js/router.js';
 import { createTerrain } from './terrain.js';
 import { createWorm } from './worm.js';
+import { createSigils } from './sigils.js';
 
 const FROZEN_TIME = 9; // elapsed seconds shown when prefers-reduced-motion
 const CAM_BASE = new THREE.Vector3(0, 90, 260);
@@ -18,6 +19,25 @@ const state = {
   updaters: [], interactive: [], sigils: null,
   fps: { frames: 0, t: 0, lowSeconds: 0, degraded: false },
 };
+
+const _raycaster = new THREE.Raycaster();
+const _ndc = new THREE.Vector2();
+
+function pick(e) {
+  if (!state.interactive.length) return null;
+  _ndc.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+  _raycaster.setFromCamera(_ndc, state.camera);
+  const hit = _raycaster.intersectObjects(state.interactive)[0];
+  return hit ? hit.object : null;
+}
+
+function onClick(e) {
+  const m = pick(e);
+  if (!m) return;
+  const url = m.userData.url;
+  if (url.startsWith('mailto:')) window.location.href = url;
+  else window.open(url, '_blank', 'noopener');
+}
 
 export async function mount(container) {
   if (!supportsWebGL()) throw new Error('WebGL unavailable');
@@ -51,6 +71,13 @@ export async function mount(container) {
   const worm = createWorm();
   scene.add(worm.group);
   state.updaters.push(worm);
+
+  const sigils = createSigils();
+  scene.add(sigils.group);
+  state.updaters.push(sigils);
+  state.sigils = sigils;
+  state.interactive = sigils.meshes;
+  renderer.domElement.addEventListener('click', onClick);
 
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
@@ -133,6 +160,13 @@ function onResize() {
 function onPointerMove(e) {
   state.pointer.tx = (e.clientX / window.innerWidth) * 2 - 1;
   state.pointer.ty = (e.clientY / window.innerHeight) * 2 - 1;
+  if (!state.sigils) return;
+  const m = pick(e);
+  state.sigils.setHover(m);
+  state.renderer.domElement.style.cursor = m ? 'pointer' : 'default';
+  const label = document.getElementById('hud-label');
+  label.hidden = !m;
+  label.textContent = m ? m.userData.label : '';
 }
 
 function startLoop() {
