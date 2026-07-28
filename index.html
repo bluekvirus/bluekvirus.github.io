@@ -42,5 +42,9 @@
   <p>© 2012–2026 innobubble.com</p>
 </div>
 <noscript><style>#fallback{display:block}#hud{display:none}body{overflow:auto}</style></noscript>
+<script type="module">
+  import { boot } from './js/router.js';
+  boot(document.getElementById('scene'), document.getElementById('fallback'));
+</script>
 </body>
 </html>
