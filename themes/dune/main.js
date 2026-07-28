@@ -7,6 +7,7 @@ import { showFallback } from '../../js/router.js';
 import { createTerrain } from './terrain.js';
 import { createWorm } from './worm.js';
 import { createSigils } from './sigils.js';
+import { createProps } from './props.js';
 
 const FROZEN_TIME = 9; // elapsed seconds shown when prefers-reduced-motion
 const CAM_BASE = new THREE.Vector3(0, 90, 260);
@@ -78,6 +79,10 @@ export async function mount(container) {
   state.sigils = sigils;
   state.interactive = sigils.meshes;
   renderer.domElement.addEventListener('click', onClick);
+
+  const props = createProps({ small: state.small });
+  scene.add(props.group);
+  state.updaters.push(props);
 
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
