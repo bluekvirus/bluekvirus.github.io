@@ -4,6 +4,7 @@ export const COLORS = {
   sandShadow: 0x4a2d5e,
   skyZenith: 0x12081f,
   horizon: 0xc2452e,
+  starWhite: 0xffffff,
   neonCyan: 0x00e5ff,
   neonMagenta: 0xff2e88,
   amber: 0xffb347,

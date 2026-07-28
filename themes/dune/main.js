@@ -103,7 +103,7 @@ function buildStars() {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   return new THREE.Points(geo, new THREE.PointsMaterial({
-    color: 0xffffff, size: 2, transparent: true, opacity: 0.8, fog: false, sizeAttenuation: false,
+    color: COLORS.starWhite, size: 2, transparent: true, opacity: 0.8, fog: false, sizeAttenuation: false,
   }));
 }
 
