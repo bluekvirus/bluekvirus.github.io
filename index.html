@@ -1,27 +1,46 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tim Lauv — Arrakis at Dusk</title>
+<meta name="description" content="Tim Lauv's portfolio — a low-poly Dune world with cyber-neon accents, rendered in three.js.">
+<link rel="stylesheet" href="css/main.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+</head>
 <body>
-	<h1>Welcome to Tim Lauv's Portfolio</h1>
-	<hr>
-	<h2>About me</h2>
-	<ul>
-		<li><a href="https://www.linkedin.com/in/timzhiyuanliu">Linked-in Profile</a></li>
-		<li><a href="mailto:bluekvirus@gmail.com?subject=Hi, I need a copy of your CV :)">CV (available on request)</a></li>
-	</ul>
+<div id="scene" aria-hidden="true"></div>
 
-	<h2>Projects</h2>
-	<ul>
-		<li><a href="http://bluekvirus.github.io/Stage.js/">Stage.js framework (realtime SPA architecture for complex configure/monitoring managers)</a></li>
-		<li><a href="https://www.npmjs.org/package/stage-devtools">Stage.js cli-tool</a></li>
-		<li><a href="http://bluekvirus.github.io/Stage-unideck">Stage.js unideck (responsive columns, flex box and grid)</a></li>
-		<li><a href="https://pypi.python.org/pypi/django-express">Django express (function and model class as RESTful services)</a></li>
-		<li><a href="https://github.com/bluekvirus/osgi-starterkit">OSGi starter-kit (Felix, Bnd, Gradle and IntelliJ all fit together)</a></li>
-	</ul>
-	
-	<h2>Contact</h2>
-	<p><a href="mailto:bluekvirus@gmail.com">bluekvirus (at) gmail (dot) com</a></p>
-	<hr>
-	<p>Copyright © 2012 - 2019 innobubble.com</p>
+<div id="hud">
+  <header id="hud-name">TIM LAUV</header>
+  <div id="hud-label" hidden></div>
+  <nav id="hud-nav" aria-label="Site links">
+    <a href="https://www.linkedin.com/in/timzhiyuanliu">LinkedIn</a>
+    <a href="https://github.com/bluekvirus">Projects</a>
+    <a href="mailto:bluekvirus@gmail.com?subject=Hi, I need a copy of your CV :)">CV</a>
+    <a href="mailto:bluekvirus@gmail.com">Contact</a>
+  </nav>
+  <footer id="hud-copy">© 2012–2026 innobubble.com</footer>
+</div>
 
+<div id="fallback">
+  <h1>Tim Lauv</h1>
+  <p>This page is normally a 3D dune world — you are viewing the quiet version.</p>
+  <ul>
+    <li><a href="https://www.linkedin.com/in/timzhiyuanliu">LinkedIn profile</a></li>
+    <li><a href="https://github.com/bluekvirus">Open-source projects</a></li>
+    <li><a href="mailto:bluekvirus@gmail.com?subject=Hi, I need a copy of your CV :)">CV (on request)</a></li>
+    <li><a href="mailto:bluekvirus@gmail.com">bluekvirus (at) gmail (dot) com</a></li>
+  </ul>
+  <p>© 2012–2026 innobubble.com</p>
+</div>
+<noscript><style>#fallback{display:block}#hud{display:none}body{overflow:auto}</style></noscript>
 </body>
 </html>
