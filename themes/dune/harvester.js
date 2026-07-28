@@ -80,7 +80,7 @@ function buildHullGeometry() {
   // --- upper deck / cab ---
   const deckCx = -10, deckBottom = hullTop, deckH = 6, deckTop = deckBottom + deckH;
   parts.push(paint(place(box(18, deckH, 13), { pos: [deckCx, deckBottom + deckH / 2, 0] }), HULL_DARK));
-  parts.push(paint(place(box(18.4, 0.6, 13.4), { pos: [deckCx + 8.5, deckBottom + deckH - 0.3, 0] }), HARK_RED)); // deck front trim
+  parts.push(paint(place(box(18.4, 0.6, 13.4), { pos: [deckCx + 8.5, deckTop + 0.3, 0] }), HARK_RED)); // deck front trim, raised proud of deckTop to avoid z-fighting
 
   // --- front intake scoop ---
   const hullFrontX = hullCx + 21; // hull spans hullCx-21 .. hullCx+21
