@@ -3,7 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { COLORS } from './palette.js';
-import { FOCUS } from './layout.js';
+import { FOCUS, SUN_DIR } from './layout.js';
 import { fitFocus } from './framing.js';
 import { showFallback } from '../../js/router.js';
 import { createTerrain } from './terrain.js';
@@ -97,11 +97,12 @@ export async function mount(container) {
   // the bleached sky dome and a small blown-out sun disc remain.
   scene.add(buildSky(), buildSunDisc());
 
-  // Near-overhead noon sun: short, hard, high-contrast shadows. Position sits
-  // high and to the side (elevation ~70° as seen from the battle) with the
-  // target pinned on the battle center, same as the dusk-era aim point.
+  // Harsh noon sun, lowered to ~55° elevation (fix round 1: 70° left only a
+  // few pixels of contact shadow under troops/harvester at native
+  // resolution). Position and direction both derive from the single
+  // SUN_DIR source in layout.js — see its comment for why.
   const sun = new THREE.DirectionalLight(COLORS.sunlight, 3.6);
-  sun.position.set(-180, 620, -120);
+  sun.position.set(...SUN_DIR);
   sun.castShadow = true;
   const shadowSize = state.small ? 1024 : 2048;
   sun.shadow.mapSize.set(shadowSize, shadowSize);
@@ -114,7 +115,12 @@ export async function mount(container) {
   sun.shadow.bias = -0.0005;
   sun.target.position.set(30, 0, -270);
   scene.add(sun, sun.target);
-  scene.add(new THREE.HemisphereLight(COLORS.skyZenith, COLORS.sandLit, 0.75));
+  // Lowered from 0.75 (fix round 1): the raised hemisphere light was one of
+  // two compounding causes flattening the terrain's low-poly faceted look
+  // (see terrain.js for the other — the narrowed vertex-tint span). 0.55
+  // still reads as bright midday fill without washing out real directional
+  // shading on the dune facets.
+  scene.add(new THREE.HemisphereLight(COLORS.skyZenith, COLORS.sandLit, 0.55));
   scene.add(createTerrain());
 
   const harvester = createHarvester();
@@ -202,7 +208,7 @@ function buildSky() {
 // radius (3500). The soft radial-gradient texture is built once here at
 // mount and never touched again — no per-frame allocation.
 function buildSunDisc() {
-  const dir = new THREE.Vector3(-180, 620, -120).normalize();
+  const dir = new THREE.Vector3(...SUN_DIR).normalize();
   const size = 128;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;

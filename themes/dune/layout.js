@@ -98,3 +98,28 @@ export const FOCUS = {
   horizonFracWide: 0.38,
   horizonFracTall: 0.30,
 };
+
+// Single source of truth for the world-space sun direction (fix round 1,
+// Task 2 review). Previously this same "near-overhead noon sun" vector was
+// hand-duplicated in three places — main.js's DirectionalLight position,
+// main.js's buildSunDisc() placement, and terrain.js's hand-normalized
+// vertex-tint bake vector — which meant changing the sun angle required
+// editing three unrelated numbers in two files and kept drifting out of
+// sync (main.js used (-180,620,-120) while terrain.js used a differently-
+// rounded normalized copy). layout.js is the coordinates single-source for
+// the rest of the scene, so this lives here too: it's a world-space
+// direction like everything else in this file.
+//
+// This is a raw (unnormalized) position-style vector, same convention the
+// old duplicated copies used — consumers do `new THREE.Vector3(...SUN_DIR)`
+// and `.normalize()` themselves before deriving a light position (scaled by
+// their own distance), a disc placement, or a shading vector, so editing
+// these three numbers alone moves the sun everywhere it appears.
+//
+// Elevation lowered from ~70-71deg (the v4 spec's starting value) to ~55deg
+// per fix-round-1 review: at 70 deg troop/harvester contact shadows were only
+// a few pixels at native resolution and the scene lost its grounding; 55 deg
+// still reads as unambiguous harsh midday while restoring shadow anchoring.
+// Horizontal (x,z) direction unchanged from the original -180,-120 azimuth —
+// only the elevation (y) was lowered: atan2(309, hypot(180,120)) ~= 55.0deg.
+export const SUN_DIR = [-180, 309, -120];
