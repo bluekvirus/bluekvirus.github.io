@@ -13,6 +13,9 @@ export const LAYOUT = {
   // Two wrecked-vehicle smoke-column sites flanking the Harkonnen arc's
   // ends (battle-damage story) — coordinates only, FX lives in combatfx.js.
   wrecks: [[58, -316], [17, -184]],
+  // Bounding box explosions are scattered within — coordinates only, FX
+  // (timing/pools/rendering) lives in combatfx.js.
+  battlefield: { x: [-20, 220], z: [-330, -200] },
   camBase: [60, 55, -60],
   // camTarget.x nudged -30 → -15 (with fov 55 → 58 in main.js) so the Fremen
   // cover field (x ∈ [85, 230]) is mostly in frame instead of ~3/10 waypoints;

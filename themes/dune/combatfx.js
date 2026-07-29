@@ -32,8 +32,9 @@ const EXPLOSION_SMOKE_TOTAL = EXPLOSION_SLOTS * EXPLOSION_SMOKE_PER; // 120
 const EXPLOSION_FLASH_DUR = 0.25;
 const EXPLOSION_RING_DUR = 1.1;
 const SMOKE_LIFE = 4.0;
-const BATTLEFIELD_X = [-20, 220];
-const BATTLEFIELD_Z = [-330, -200];
+// sourced from layout.js — coordinates only live there
+const BATTLEFIELD_X = LAYOUT.battlefield.x;
+const BATTLEFIELD_Z = LAYOUT.battlefield.z;
 
 const IMPACT_COUNT = 48;   // shared "explosion puff pool" slice for tracer landings
 const IMPACT_PER_HIT = 2;  // troops.js's firing duty-cycle is high (often 8-14/18 units
@@ -324,7 +325,7 @@ function createPuffs() {
 function createExplosionShells() {
   const flashGeo = new THREE.IcosahedronGeometry(1, 1);
   const flashMat = new THREE.MeshBasicMaterial({
-    color: 0xffffff, transparent: true, opacity: 0.28,
+    color: COLORS.starWhite, transparent: true, opacity: 0.28,
     blending: THREE.AdditiveBlending, depthWrite: false,
   });
   const flashMesh = new THREE.InstancedMesh(flashGeo, flashMat, EXPLOSION_SLOTS);
@@ -334,7 +335,7 @@ function createExplosionShells() {
   const ringGeo = new THREE.RingGeometry(0.7, 1, 20);
   ringGeo.rotateX(-Math.PI / 2);
   const ringMat = new THREE.MeshBasicMaterial({
-    color: 0xffffff, transparent: true, opacity: 0.5, side: THREE.DoubleSide,
+    color: COLORS.starWhite, transparent: true, opacity: 0.5, side: THREE.DoubleSide,
     blending: THREE.AdditiveBlending, depthWrite: false,
   });
   const ringMesh = new THREE.InstancedMesh(ringGeo, ringMat, EXPLOSION_SLOTS);
@@ -348,12 +349,16 @@ function createExplosionShells() {
 
   const _pos = new THREE.Vector3(), _quat = new THREE.Quaternion(), _scale = new THREE.Vector3();
   const _mat = new THREE.Matrix4(), _color = new THREE.Color();
+  // Single shared "parked" matrix (offscreen, zero-scale) — built once here
+  // and reused by setMatrixAt below, never re-composed per frame/instance.
+  const PARKED_MAT = new THREE.Matrix4().compose(
+    new THREE.Vector3(0, -99999, 0), new THREE.Quaternion(), new THREE.Vector3(0, 0, 0)
+  );
 
   // park every instance offscreen with zero scale + black color at creation
   for (let i = 0; i < EXPLOSION_SLOTS; i++) {
-    _mat.compose(new THREE.Vector3(0, -99999, 0), _quat, new THREE.Vector3(0, 0, 0));
-    flashMesh.setMatrixAt(i, _mat);
-    ringMesh.setMatrixAt(i, _mat);
+    flashMesh.setMatrixAt(i, PARKED_MAT);
+    ringMesh.setMatrixAt(i, PARKED_MAT);
     flashMesh.setColorAt(i, new THREE.Color(0, 0, 0));
     ringMesh.setColorAt(i, new THREE.Color(0, 0, 0));
   }
@@ -382,8 +387,7 @@ function createExplosionShells() {
         _color.set(COLORS.explosionOrange).multiplyScalar(0.9 + env * 2.6);
         flashMesh.setColorAt(i, _color);
       } else {
-        _mat.compose(new THREE.Vector3(0, -99999, 0), _quat, new THREE.Vector3(0, 0, 0));
-        flashMesh.setMatrixAt(i, _mat);
+        flashMesh.setMatrixAt(i, PARKED_MAT);
       }
 
       const rt = t / EXPLOSION_RING_DUR;
@@ -396,8 +400,7 @@ function createExplosionShells() {
         _color.set(COLORS.dustTan).multiplyScalar(Math.max(0, 1 - rt));
         ringMesh.setColorAt(i, _color);
       } else {
-        _mat.compose(new THREE.Vector3(0, -99999, 0), _quat, new THREE.Vector3(0, 0, 0));
-        ringMesh.setMatrixAt(i, _mat);
+        ringMesh.setMatrixAt(i, PARKED_MAT);
       }
     }
     flashMesh.instanceMatrix.needsUpdate = true;
