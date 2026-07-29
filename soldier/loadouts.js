@@ -40,6 +40,12 @@ export const COLORWAYS = {
 };
 
 export const LOADOUTS = {
+  // -- the foundation: the bare body, nothing layered on it ----------------
+  base: {
+    body: 'regular',
+    pose: 'idle',
+  },
+
   // -- top row: regular military -------------------------------------------
   grunt: {
     body: 'regular',
@@ -85,5 +91,6 @@ export const LOADOUTS = {
   },
 };
 
-// Sheet order, left to right: top row then bottom row.
-export const ROSTER = ['grunt', 'operator', 'ranger', 'fighter', 'shemagh', 'militant'];
+// The bare base first — the foundation is always on screen next to the geared
+// figures — then sheet order, left to right: top row then bottom row.
+export const ROSTER = ['base', 'grunt', 'operator', 'ranger', 'fighter', 'shemagh', 'militant'];

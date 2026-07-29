@@ -1,13 +1,16 @@
 // Torso rig catalogue. Parents to the `chest` socket. Pouches, magazines and
 // straps are separate blocks standing PROUD of the vest slab — the layered-gear
 // silhouette is most of the read at this scale.
+//
+// The torso under these is 0.375 wide and 0.235 deep at the chest; slabs run
+// ~0.43 wide / ~0.31 deep so a worn vest reads as a layer, not a crate.
 
 import { box, taperedBox } from './prim.js';
 
 /** Shared slab helper: the wrap-around carrier body. */
-function slab(name, { w = 0.52, h = 0.44, d = 0.40, y = -0.08, mat, scene, parent }) {
+function slab(name, { w = 0.43, h = 0.42, d = 0.31, y = -0.10, mat, scene, parent }) {
   return box(name, {
-    size: [w, h, d], anchor: [0, 0, 0], pos: [0, y, 0.005],
+    size: [w, h, d], anchor: [0, 0, 0], pos: [0, y, 0.004],
     mat, scene, parent,
   });
 }
@@ -20,14 +23,14 @@ export function lightCarrier({ scene, mats, socket }) {
   // Horizontal MOLLE ridges across the front plate.
   for (let i = 0; i < 3; i++) {
     meshes.push(box(`lcRidge${i}`, {
-      size: [0.42, 0.045, 0.03], anchor: [0, 0, -1],
-      pos: [0, -0.20 + i * 0.11, 0.205], mat: mats.vestTanDark, ...g,
+      size: [0.34, 0.04, 0.024], anchor: [0, 0, -1],
+      pos: [0, -0.21 + i * 0.10, 0.160], mat: mats.vestTanDark, ...g,
     }));
   }
   for (const s of [1, -1]) {
     meshes.push(box(`lcStrap${s > 0 ? 'L' : 'R'}`, {
-      size: [0.10, 0.055, 0.34], anchor: [0, -1, 0],
-      pos: [s * 0.15, 0.14, 0], mat: mats.vestTanDark, ...g,
+      size: [0.085, 0.05, 0.28], anchor: [0, -1, 0],
+      pos: [s * 0.12, 0.11, 0], mat: mats.vestTanDark, ...g,
     }));
   }
   return meshes;
@@ -37,32 +40,32 @@ export function lightCarrier({ scene, mats, socket }) {
 export function plateCarrier({ scene, mats, socket }) {
   const meshes = [];
   const g = { scene, parent: socket };
-  meshes.push(slab('pcBody', { d: 0.42, mat: mats.vestNavy, ...g }));
+  meshes.push(slab('pcBody', { d: 0.33, mat: mats.vestNavy, ...g }));
   // Magazine pouches across the lower front, brass tips showing.
   for (let i = -1; i <= 1; i++) {
     meshes.push(box(`pcPouch${i + 1}`, {
-      size: [0.13, 0.17, 0.10], anchor: [0, 0, -1],
-      pos: [i * 0.15, -0.17, 0.215], mat: mats.vestNavyDark, ...g,
+      size: [0.105, 0.14, 0.08], anchor: [0, 0, -1],
+      pos: [i * 0.12, -0.185, 0.170], mat: mats.vestNavyDark, ...g,
     }));
     meshes.push(box(`pcBrass${i + 1}`, {
-      size: [0.09, 0.05, 0.07], anchor: [0, 0, -1],
-      pos: [i * 0.15, -0.065, 0.22], mat: mats.brass, ...g,
+      size: [0.07, 0.04, 0.055], anchor: [0, 0, -1],
+      pos: [i * 0.12, -0.10, 0.174], mat: mats.brass, ...g,
     }));
   }
   // Admin pouch high on the chest.
   meshes.push(box('pcAdmin', {
-    size: [0.17, 0.10, 0.06], anchor: [0, 0, -1],
-    pos: [0.055, 0.03, 0.215], mat: mats.vestNavyDark, ...g,
+    size: [0.14, 0.085, 0.05], anchor: [0, 0, -1],
+    pos: [0.045, -0.01, 0.170], mat: mats.vestNavyDark, ...g,
   }));
   // Radio on the left shoulder strap.
   meshes.push(box('pcRadio', {
-    size: [0.075, 0.13, 0.07], anchor: [0, 0, -1],
-    pos: [-0.165, 0.035, 0.20], mat: mats.gear, ...g,
+    size: [0.06, 0.105, 0.055], anchor: [0, 0, -1],
+    pos: [-0.135, -0.005, 0.160], mat: mats.gear, ...g,
   }));
   for (const s of [1, -1]) {
     meshes.push(box(`pcStrap${s > 0 ? 'L' : 'R'}`, {
-      size: [0.10, 0.055, 0.36], anchor: [0, -1, 0],
-      pos: [s * 0.15, 0.14, 0], mat: mats.vestNavyDark, ...g,
+      size: [0.085, 0.05, 0.29], anchor: [0, -1, 0],
+      pos: [s * 0.12, 0.11, 0], mat: mats.vestNavyDark, ...g,
     }));
   }
   return meshes;
@@ -73,28 +76,28 @@ export function chestRig({ scene, mats, socket }) {
   const meshes = [];
   const g = { scene, parent: socket };
   meshes.push(box('crBase', {
-    size: [0.46, 0.26, 0.38], anchor: [0, 0, 0], pos: [0, -0.06, 0.005],
+    size: [0.38, 0.22, 0.30], anchor: [0, 0, 0], pos: [0, -0.07, 0.004],
     mat: mats.vestTan, ...g,
   }));
   for (let i = -1; i <= 1; i++) {
     meshes.push(box(`crPouch${i + 1}`, {
-      size: [0.12, 0.16, 0.10], anchor: [0, 0, -1],
-      pos: [i * 0.14, -0.08, 0.195], mat: mats.vestTanDark, ...g,
+      size: [0.095, 0.13, 0.08], anchor: [0, 0, -1],
+      pos: [i * 0.115, -0.085, 0.155], mat: mats.vestTanDark, ...g,
     }));
     meshes.push(box(`crMag${i + 1}`, {
-      size: [0.08, 0.055, 0.06], anchor: [0, 0, -1],
-      pos: [i * 0.14, 0.025, 0.20], mat: mats.metalDark, ...g,
+      size: [0.065, 0.045, 0.05], anchor: [0, 0, -1],
+      pos: [i * 0.115, 0.0, 0.158], mat: mats.metalDark, ...g,
     }));
   }
   // Grenade on the right edge.
   meshes.push(box('crGrenade', {
-    size: [0.065, 0.10, 0.06], anchor: [0, 0, -1],
-    pos: [0.215, -0.02, 0.185], mat: mats.olive, ...g,
+    size: [0.052, 0.08, 0.05], anchor: [0, 0, -1],
+    pos: [0.175, -0.045, 0.148], mat: mats.olive, ...g,
   }));
   for (const s of [1, -1]) {
     meshes.push(box(`crStrap${s > 0 ? 'L' : 'R'}`, {
-      size: [0.085, 0.05, 0.34], anchor: [0, -1, 0],
-      pos: [s * 0.15, 0.075, 0], mat: mats.vestTanDark, ...g,
+      size: [0.07, 0.045, 0.28], anchor: [0, -1, 0],
+      pos: [s * 0.12, 0.045, 0], mat: mats.vestTanDark, ...g,
     }));
   }
   return meshes;
@@ -106,17 +109,17 @@ export function bandolier({ scene, mats, socket }) {
   const g = { scene, parent: socket };
   const tilt = 0.62; // radians off vertical
   const strap = box('bandolierStrap', {
-    size: [0.11, 0.68, 0.05], anchor: [0, 0, -1],
-    pos: [0, -0.05, 0.215], mat: mats.gear, ...g,
+    size: [0.09, 0.58, 0.04], anchor: [0, 0, -1],
+    pos: [0, -0.06, 0.168], mat: mats.gear, ...g,
   });
   strap.rotation.z = tilt;
   meshes.push(strap);
   // Brass rounds studded along the strap line.
   for (let i = -2; i <= 2; i++) {
-    const t = i * 0.125;
+    const t = i * 0.105;
     const round = box(`bandolierRound${i + 2}`, {
-      size: [0.085, 0.075, 0.05], anchor: [0, 0, -1],
-      pos: [-Math.sin(tilt) * t, -0.05 + Math.cos(tilt) * t, 0.245], mat: mats.brass, ...g,
+      size: [0.07, 0.06, 0.04], anchor: [0, 0, -1],
+      pos: [-Math.sin(tilt) * t, -0.06 + Math.cos(tilt) * t, 0.192], mat: mats.brass, ...g,
     });
     round.rotation.z = tilt;
     meshes.push(round);
@@ -128,22 +131,22 @@ export function bandolier({ scene, mats, socket }) {
 export function fighterVest({ scene, mats, socket }) {
   const meshes = [];
   const g = { scene, parent: socket };
-  meshes.push(slab('fvBody', { w: 0.50, mat: mats.vestBrown, ...g }));
+  meshes.push(slab('fvBody', { w: 0.42, mat: mats.vestBrown, ...g }));
   for (let i = 0; i < 3; i++) {
     meshes.push(box(`fvRidge${i}`, {
-      size: [0.40, 0.05, 0.03], anchor: [0, 0, -1],
-      pos: [0, -0.20 + i * 0.11, 0.205], mat: mats.vestBrownDark, ...g,
+      size: [0.32, 0.045, 0.024], anchor: [0, 0, -1],
+      pos: [0, -0.21 + i * 0.10, 0.160], mat: mats.vestBrownDark, ...g,
     }));
   }
   for (const s of [1, -1]) {
     meshes.push(box(`fvStrap${s > 0 ? 'L' : 'R'}`, {
-      size: [0.09, 0.055, 0.36], anchor: [0, -1, 0],
-      pos: [s * 0.145, 0.14, 0], mat: mats.gear, ...g,
+      size: [0.075, 0.05, 0.29], anchor: [0, -1, 0],
+      pos: [s * 0.115, 0.11, 0], mat: mats.gear, ...g,
     }));
     // Buckles where the straps meet the plate.
     meshes.push(box(`fvBuckle${s > 0 ? 'L' : 'R'}`, {
-      size: [0.06, 0.06, 0.03], anchor: [0, 0, -1],
-      pos: [s * 0.145, 0.10, 0.205], mat: mats.metal, ...g,
+      size: [0.05, 0.05, 0.024], anchor: [0, 0, -1],
+      pos: [s * 0.115, 0.07, 0.160], mat: mats.metal, ...g,
     }));
   }
   return meshes;
@@ -156,28 +159,28 @@ export function harnessRig({ scene, mats, socket }) {
   // Cross straps over the shoulders.
   for (const s of [1, -1]) {
     meshes.push(box(`hrStrap${s > 0 ? 'L' : 'R'}`, {
-      size: [0.09, 0.055, 0.40], anchor: [0, -1, 0],
-      pos: [s * 0.14, 0.13, 0], mat: mats.gear, ...g,
+      size: [0.075, 0.05, 0.31], anchor: [0, -1, 0],
+      pos: [s * 0.11, 0.10, 0], mat: mats.gear, ...g,
     }));
     meshes.push(box(`hrFront${s > 0 ? 'L' : 'R'}`, {
-      size: [0.09, 0.34, 0.04], anchor: [0, -1, -1],
-      pos: [s * 0.14, -0.21, 0.155], mat: mats.gear, ...g,
+      size: [0.075, 0.30, 0.032], anchor: [0, -1, -1],
+      pos: [s * 0.11, -0.22, 0.118], mat: mats.gear, ...g,
     }));
   }
   // Dark waist plate carrying the pouches.
   meshes.push(box('hrPlate', {
-    size: [0.46, 0.24, 0.36], anchor: [0, 0, 0], pos: [0, -0.26, 0.005],
+    size: [0.38, 0.20, 0.28], anchor: [0, 0, 0], pos: [0, -0.25, 0.004],
     mat: mats.vestNavyDark, ...g,
   }));
   // Big tan pouches low on the belly.
   for (let i = -1; i <= 1; i++) {
     meshes.push(box(`hrPouch${i + 1}`, {
-      size: [0.13, 0.20, 0.12], anchor: [0, 0, -1],
-      pos: [i * 0.15, -0.26, 0.185], mat: mats.vestTan, ...g,
+      size: [0.105, 0.16, 0.095], anchor: [0, 0, -1],
+      pos: [i * 0.12, -0.25, 0.145], mat: mats.vestTan, ...g,
     }));
     meshes.push(box(`hrFlap${i + 1}`, {
-      size: [0.135, 0.06, 0.13], anchor: [0, 0, -1],
-      pos: [i * 0.15, -0.175, 0.183], mat: mats.vestTanDark, ...g,
+      size: [0.11, 0.05, 0.10], anchor: [0, 0, -1],
+      pos: [i * 0.12, -0.18, 0.143], mat: mats.vestTanDark, ...g,
     }));
   }
   return meshes;
@@ -189,29 +192,29 @@ export function wiredRig({ scene, mats, socket }) {
   const g = { scene, parent: socket };
   for (const s of [1, -1]) {
     meshes.push(box(`wrStrap${s > 0 ? 'L' : 'R'}`, {
-      size: [0.09, 0.055, 0.40], anchor: [0, -1, 0],
-      pos: [s * 0.14, 0.13, 0], mat: mats.gear, ...g,
+      size: [0.075, 0.05, 0.31], anchor: [0, -1, 0],
+      pos: [s * 0.11, 0.10, 0], mat: mats.gear, ...g,
     }));
   }
   // Chest band the charges hang from.
   meshes.push(box('wrBand', {
-    size: [0.50, 0.26, 0.36], anchor: [0, 0, 0], pos: [0, -0.14, 0.005],
+    size: [0.41, 0.22, 0.28], anchor: [0, 0, 0], pos: [0, -0.13, 0.004],
     mat: mats.vestNavy, ...g,
   }));
   // Four charge pouches across the front.
   for (let i = 0; i < 4; i++) {
-    const x = -0.175 + i * 0.115;
+    const x = -0.14 + i * 0.093;
     meshes.push(box(`wrCharge${i}`, {
-      size: [0.10, 0.18, 0.09], anchor: [0, 0, -1],
-      pos: [x, -0.14, 0.185], mat: mats.vestNavyDark, ...g,
+      size: [0.08, 0.15, 0.07], anchor: [0, 0, -1],
+      pos: [x, -0.13, 0.145], mat: mats.vestNavyDark, ...g,
     }));
   }
   // Short red det-cord loops atop each charge.
   for (let i = 0; i < 4; i++) {
-    const x = -0.175 + i * 0.115;
+    const x = -0.14 + i * 0.093;
     meshes.push(box(`wrWire${i}`, {
-      size: [0.05, 0.035, 0.025], anchor: [0, -1, -1],
-      pos: [x, -0.05, 0.195], mat: mats.wire, ...g,
+      size: [0.04, 0.03, 0.02], anchor: [0, -1, -1],
+      pos: [x, -0.055, 0.152], mat: mats.wire, ...g,
     }));
   }
   return meshes;

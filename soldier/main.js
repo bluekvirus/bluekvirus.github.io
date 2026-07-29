@@ -18,7 +18,7 @@ const PARAM_ALIASES = {
   eyewear: ['eyewear', 'glasses'],
   torso: ['torso', 'vest', 'rig'],
   back: ['back', 'pack'],
-  weapon: ['weapon'],
+  weapon: ['weapon', 'hands'],
 };
 
 /** Build a loadout from the URL: a named one, ad-hoc composition, or null (lineup). */

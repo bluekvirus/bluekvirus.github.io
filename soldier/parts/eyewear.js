@@ -1,22 +1,24 @@
-// Eyewear catalogue. Parents to the `head` socket, sits below the brow band.
+// Eyewear catalogue. Parents to the `head` socket and positions against the
+// shared HEAD landmarks. Contract: eyewear rides ≥ 0.060 proud of the face
+// plane, on top of face wraps and balaclavas, so any stack composes.
 
 import { box } from './prim.js';
-import { DIMS } from './body.js';
+import { HEAD } from './body.js';
 
-const S = DIMS.headSize;
+const H = HEAD;
 
 /** Wraparound sunglasses: dark lens bar plus temple arms. */
 export function sunglasses({ scene, mats, socket }) {
   const meshes = [];
   const g = { scene, parent: socket };
   meshes.push(box('shadesLens', {
-    size: [S * 0.82, S * 0.15, S * 0.14], anchor: [0, 0, -1],
-    pos: [0, S * 0.47, S * 0.40], mat: mats.visor, ...g,
+    size: [H.w * 0.88, 0.036, 0.020], anchor: [0, 0, -1],
+    pos: [0, H.eyeY, H.faceZ + 0.042], mat: mats.visor, ...g,
   }));
   for (const s of [1, -1]) {
     meshes.push(box(`shadesArm${s > 0 ? 'L' : 'R'}`, {
-      size: [S * 0.06, S * 0.07, S * 0.52], anchor: [0, 0, -1],
-      pos: [s * S * 0.42, S * 0.47, -S * 0.06], mat: mats.gear, ...g,
+      size: [0.012, 0.016, H.faceZ + 0.055 - (-0.02)], anchor: [0, 0, -1],
+      pos: [s * (H.w / 2 + 0.008), H.eyeY, -0.02], mat: mats.gear, ...g,
     }));
   }
   return meshes;
@@ -26,24 +28,23 @@ export function sunglasses({ scene, mats, socket }) {
 export function goggles({ scene, mats, socket }) {
   const meshes = [];
   const g = { scene, parent: socket };
-  // Pushed well proud of the face so they also clear balaclavas and wraps.
   meshes.push(box('goggleFrame', {
-    size: [S * 0.74, S * 0.24, S * 0.16], anchor: [0, 0, -1],
-    pos: [0, S * 0.52, S * 0.54], mat: mats.gear, ...g,
+    size: [H.w * 0.80, 0.052, 0.028], anchor: [0, 0, -1],
+    pos: [0, H.eyeY + 0.004, H.faceZ + 0.038], mat: mats.gear, ...g,
   }));
   meshes.push(box('goggleLens', {
-    size: [S * 0.62, S * 0.14, S * 0.06], anchor: [0, 0, -1],
-    pos: [0, S * 0.52, S * 0.68], mat: mats.visor, ...g,
+    size: [H.w * 0.66, 0.034, 0.012], anchor: [0, 0, -1],
+    pos: [0, H.eyeY + 0.004, H.faceZ + 0.064], mat: mats.visor, ...g,
   }));
   for (const s of [1, -1]) {
     meshes.push(box(`goggleStrap${s > 0 ? 'L' : 'R'}`, {
-      size: [S * 0.05, S * 0.12, S * 0.78], anchor: [0, 0, -1],
-      pos: [s * S * 0.47, S * 0.55, -S * 0.44], mat: mats.metalDark, ...g,
+      size: [0.012, 0.028, H.faceZ + 0.04 - H.backZ + 0.03], anchor: [0, 0, -1],
+      pos: [s * (H.w / 2 + 0.012), H.eyeY + 0.004, H.backZ - 0.028], mat: mats.metalDark, ...g,
     }));
   }
   meshes.push(box('goggleStrapBack', {
-    size: [S * 0.94, S * 0.12, S * 0.05], anchor: [0, 0, 1],
-    pos: [0, S * 0.55, -S * 0.44], mat: mats.metalDark, ...g,
+    size: [H.w + 0.048, 0.028, 0.012], anchor: [0, 0, 1],
+    pos: [0, H.eyeY + 0.004, H.backZ - 0.028], mat: mats.metalDark, ...g,
   }));
   return meshes;
 }

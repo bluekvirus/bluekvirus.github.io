@@ -26,10 +26,15 @@ export function box(name, { size, anchor = [0, 0, 0], pos = [0, 0, 0], mat, scen
   return m;
 }
 
-/** A tapered block — a box with independently scaled top and bottom faces. */
-export function taperedBox(name, { bottom, top, height, anchor = [0, 1, 0], pos = [0, 0, 0], mat, scene, parent }) {
+/**
+ * A tapered block — a box with independently scaled top and bottom faces.
+ * `shift` slides the whole top face sideways ([x, z]) so a block can lean:
+ * a skull whose face plane stays vertical while the back bulges, a sloped brim.
+ */
+export function taperedBox(name, { bottom, top, height, anchor = [0, 1, 0], pos = [0, 0, 0], shift = [0, 0], mat, scene, parent }) {
   const [bw, bd] = bottom;
   const [tw, td] = top;
+  const [sx, sz] = shift;
   const h = height;
   const y0 = anchor[1] === 1 ? -h : anchor[1] === -1 ? 0 : -h / 2;
   const y1 = y0 + h;
@@ -39,7 +44,8 @@ export function taperedBox(name, { bottom, top, height, anchor = [0, 1, 0], pos 
   // 8 corners: 0-3 bottom (y0), 4-7 top (y1), CCW from -x-z.
   const p = [
     [-hx[0], y0, -hz[0]], [hx[0], y0, -hz[0]], [hx[0], y0, hz[0]], [-hx[0], y0, hz[0]],
-    [-hx[1], y1, -hz[1]], [hx[1], y1, -hz[1]], [hx[1], y1, hz[1]], [-hx[1], y1, hz[1]],
+    [sx - hx[1], y1, sz - hz[1]], [sx + hx[1], y1, sz - hz[1]],
+    [sx + hx[1], y1, sz + hz[1]], [sx - hx[1], y1, sz + hz[1]],
   ];
   const quads = [
     [0, 1, 2, 3].reverse(), // bottom
@@ -66,6 +72,35 @@ export function taperedBox(name, { bottom, top, height, anchor = [0, 1, 0], pos 
   BABYLON.VertexData.ComputeNormals(positions, indices, normals);
   vd.normals = normals;
   vd.applyToMesh(m);
+  m.position.set(pos[0], pos[1], pos[2]);
+  if (mat) m.material = mat;
+  if (parent) m.parent = parent;
+  return m;
+}
+
+/**
+ * A faceted dome: a low-tessellation hemisphere (flat shading happens once,
+ * centrally, in main.js). `size` is [w, h, d] of the full dome; origin at the
+ * rim centre, dome rising +Y.
+ */
+export function dome(name, { size, cut = 0.5, pos = [0, 0, 0], mat, scene, parent, segments = 4 }) {
+  const [w, h, d] = size;
+  const m = BABYLON.MeshBuilder.CreateSphere(name, {
+    diameter: 1, segments, slice: cut, sideOrientation: BABYLON.Mesh.FRONTSIDE,
+  }, scene);
+  // Unit sphere sliced from the top: scale to the requested dome box.
+  m.bakeTransformIntoVertices(BABYLON.Matrix.Scaling(w, h / cut, d));
+  m.position.set(pos[0], pos[1], pos[2]);
+  if (mat) m.material = mat;
+  if (parent) m.parent = parent;
+  return m;
+}
+
+/** A faceted cylinder (low tessellation reads as low-poly once flat shaded). */
+export function cyl(name, { dia, diaTop, height, pos = [0, 0, 0], mat, scene, parent, tessellation = 10 }) {
+  const m = BABYLON.MeshBuilder.CreateCylinder(name, {
+    diameter: dia, diameterTop: diaTop ?? dia, height, tessellation,
+  }, scene);
   m.position.set(pos[0], pos[1], pos[2]);
   if (mat) m.material = mat;
   if (parent) m.parent = parent;

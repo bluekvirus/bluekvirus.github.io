@@ -7,20 +7,20 @@ export function assault({ scene, mats, socket }) {
   const meshes = [];
   const g = { scene, parent: socket };
   meshes.push(box('packBody', {
-    size: [0.36, 0.42, 0.20], anchor: [0, 0, 1], pos: [0, -0.04, -0.04],
+    size: [0.33, 0.40, 0.18], anchor: [0, 0, 1], pos: [0, -0.05, 0.01],
     mat: mats.vestTan, ...g,
   }));
   meshes.push(box('packLid', {
-    size: [0.34, 0.12, 0.18], anchor: [0, 0, 1], pos: [0, 0.14, -0.05],
+    size: [0.31, 0.11, 0.16], anchor: [0, 0, 1], pos: [0, 0.12, 0.0],
     mat: mats.vestTanDark, ...g,
   }));
   meshes.push(box('packPocket', {
-    size: [0.24, 0.16, 0.06], anchor: [0, 0, 1], pos: [0, -0.10, -0.24],
+    size: [0.22, 0.15, 0.055], anchor: [0, 0, 1], pos: [0, -0.11, -0.17],
     mat: mats.vestTanDark, ...g,
   }));
   // Rolled mat lashed across the bottom.
   meshes.push(box('packRoll', {
-    size: [0.40, 0.11, 0.12], anchor: [0, 0, 1], pos: [0, -0.26, -0.06],
+    size: [0.37, 0.10, 0.11], anchor: [0, 0, 1], pos: [0, -0.26, -0.01],
     mat: mats.gear, ...g,
   }));
   return meshes;
@@ -31,12 +31,12 @@ export function bedroll({ scene, mats, socket }) {
   const meshes = [];
   const g = { scene, parent: socket };
   meshes.push(box('bedroll', {
-    size: [0.48, 0.15, 0.15], anchor: [0, 0, 1], pos: [0, -0.20, -0.04],
+    size: [0.42, 0.14, 0.14], anchor: [0, 0, 1], pos: [0, -0.20, 0.01],
     mat: mats.vestBrown, ...g,
   }));
   for (const s of [1, -1]) {
     meshes.push(box(`bedrollStrap${s > 0 ? 'L' : 'R'}`, {
-      size: [0.05, 0.17, 0.17], anchor: [0, 0, 1], pos: [s * 0.14, -0.20, -0.03],
+      size: [0.045, 0.16, 0.16], anchor: [0, 0, 1], pos: [s * 0.13, -0.20, 0.02],
       mat: mats.gear, ...g,
     }));
   }
@@ -51,7 +51,7 @@ export function rpg({ scene, mats, socket }) {
   sling.parent = socket;
   // Lean back (away from the head) and cant across the spine. Babylon is
   // left-handed: negative x-rotation tips +Y toward -Z.
-  sling.position.set(0.05, 0.24, -0.13);
+  sling.position.set(0.05, 0.22, -0.10);
   sling.rotation.set(-0.14, 0, -0.38);
   const g = { scene, parent: sling };
 

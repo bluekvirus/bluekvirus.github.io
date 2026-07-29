@@ -51,7 +51,7 @@ export function createStage({ scene, engine, canvas, mats, lineup = null }) {
     'cam',
     lineup ? BABYLON.Tools.ToRadians(82) : BABYLON.Tools.ToRadians(35),
     BABYLON.Tools.ToRadians(lineup ? 78 : 72),
-    lineup ? 7.4 : 5.0,
+    lineup ? Math.max(7.4, lineup.width * 1.03) : 5.0,
     new BABYLON.Vector3(0, 0.95, 0), // aim at chest height
     scene,
   );
