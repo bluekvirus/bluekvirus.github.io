@@ -25,8 +25,13 @@ export const GUN_CLIPS = new Set([
   'Reload',
 ]);
 
-// Pistol flat against the outer right thigh, muzzle down, slight forward cant.
-const HOLSTER = { pos: [-0.0257, 0.0802, -0.0929], rot: [3.5, -174.3, 80.4] };
+// Pistol on the outer face of the right thigh, muzzle down, slight forward
+// cant. The position was solved rather than guessed: perturb each local axis,
+// measure the resulting world movement to build the local→world Jacobian, then
+// solve it for the wanted world point. An earlier value put the weapon half
+// inside the leg and overlapping the idle hand; the target here is the outer
+// thigh surface, low enough to clear the hand.
+const HOLSTER = { pos: [-0.1037, 0.1506, -0.1323], rot: [3.5, -174.3, 80.4] };
 
 function rigOnBone(scene, name, skeleton, boneName, carrier, t) {
   const bone = skeleton.bones.find((b) => b.name === boneName);
