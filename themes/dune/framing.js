@@ -42,16 +42,21 @@ export function viewDirForAspect(aspect, { viewDirWide, viewDirTall }) {
 }
 
 // Tiered focus selection (pure, testable). Rule — the simplest that produced
-// good framing in visual iteration: FOCUS.core is always framed; FOCUS.wide
-// (the far Fremen positions) is appended only at aspect >= 1.0, so landscape
-// frames the whole engagement line while phones show a tighter slice of the
-// same battle (what a camera operator would do). FOCUS.bonus (worm breach
-// apex, ~300 units past the battle) is NEVER fed into the fit — including it
-// would more than double the forward extent and shove the subject into the
-// distance; it is framed only when it falls inside the core-derived frustum
-// for free.
+// good framing in visual iteration: FOCUS.core (harvester + Harkonnen arc)
+// is always framed; FOCUS.near (the near Fremen posts) is appended at
+// aspect >= 0.7, and FOCUS.wide (the far Fremen positions) only at
+// aspect >= 1.0 — so landscape frames the whole engagement line, tablets
+// keep the close firefight, and phone portrait frames the machine and its
+// escort line tightly (what a camera operator would do; Fremen fire arrives
+// from off-frame). FOCUS.bonus (worm breach apex, ~300 units past the
+// battle) is NEVER fed into the fit — including it would more than double
+// the forward extent and shove the subject into the distance; it is framed
+// only when it falls inside the core-derived frustum for free.
 export function selectFocusPoints(focus, aspect) {
-  return aspect >= 1.0 ? focus.core.concat(focus.wide) : focus.core;
+  let pts = focus.core;
+  if (aspect >= 0.7) pts = pts.concat(focus.near);
+  if (aspect >= 1.0) pts = pts.concat(focus.wide);
+  return pts;
 }
 
 // Camera-space box fit. points: [[x,y,z], ...]; aspect: w/h.

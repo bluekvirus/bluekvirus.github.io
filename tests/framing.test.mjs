@@ -92,12 +92,14 @@ test('viewDirForAspect: anchors at the tall/wide directions, blends between', ()
   assert.ok(mid[1] < tall[1] && mid[1] > wide[1]);
 });
 
-test('selectFocusPoints: wide tier only at aspect >= 1, bonus never fed to the fit', () => {
-  const portrait = selectFocusPoints(FOCUS, 0.75);
+test('selectFocusPoints: near tier at aspect >= 0.7, wide at >= 1, bonus never fed to the fit', () => {
+  const phone = selectFocusPoints(FOCUS, 0.46);   // 430x932 / 360x780
+  const tablet = selectFocusPoints(FOCUS, 0.75);  // 768x1024
   const landscape = selectFocusPoints(FOCUS, 1.5);
-  assert.equal(portrait.length, FOCUS.core.length);
-  assert.equal(landscape.length, FOCUS.core.length + FOCUS.wide.length);
-  assert.ok(!portrait.includes(FOCUS.bonus) && !landscape.includes(FOCUS.bonus));
+  assert.equal(phone.length, FOCUS.core.length);
+  assert.equal(tablet.length, FOCUS.core.length + FOCUS.near.length);
+  assert.equal(landscape.length, FOCUS.core.length + FOCUS.near.length + FOCUS.wide.length);
+  for (const sel of [phone, tablet, landscape]) assert.ok(!sel.includes(FOCUS.bonus));
 });
 
 test('horizon-targeted aim pins the horizon at the requested frame fraction', () => {

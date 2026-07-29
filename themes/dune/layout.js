@@ -68,8 +68,13 @@ export const FOCUS = {
   // kept as explicit literals so layout.js stays the single coordinate
   // source; y = duneHeight(x,z) + soldier headroom for troop positions).
   //
-  // core — always framed: harvester hull extents, Harkonnen arc, and the
-  // NEAR Fremen positions (x <= 150).
+  // core — always framed: harvester hull extents and the Harkonnen arc.
+  // (Task 6 portrait re-tighten: the near Fremen posts moved from core to
+  // the `near` tier below — at phone portrait the machine + its Harkonnen
+  // line ARE the shot, and guaranteeing the Fremen posts too forced the
+  // camera far enough back that the subject sat small and low with an empty
+  // sand band above it. Tracer fire arriving from off-frame right is what a
+  // camera operator would accept on a phone.)
   core: [
     // harvester hull extents (Task 3 film-accurate legged rebuild: 150 long
     // x ~100 wide at the splayed feet x ~44 tall massing, slab riding at 21
@@ -85,7 +90,12 @@ export const FOCUS = {
     [51, 9, -299],
     [22, 12, -203],
     [57, 11, -244],
-    // Near Fremen cover posts (fremenCover entries with x <= 150)
+  ],
+  // near — near Fremen cover posts (fremenCover entries with x <= 150);
+  // appended to the fit at aspect >= 0.7 (framing.js selectFocusPoints), so
+  // tablets/landscape keep the close firefight guaranteed in frame while
+  // phone portrait frames the harvester + Harkonnen line tightly.
+  near: [
     [85, 17, -235],
     [110, 17, -300],
     [140, 22, -215],
@@ -115,12 +125,17 @@ export const FOCUS = {
   //    0.55 — battlefield depth projects into screen height for portrait
   //    fill, but stays far below overhead: horizon still in frame.
   viewDirWide: [0.42, 0.30, 0.86],
-  // Tall elevation ~27°: steeper than wide (17°) so battlefield depth
-  // projects into portrait screen height, but shallow enough that the near
-  // Fremen posts clear the bottom edge once the horizon is pinned in the
-  // upper band (numerically: at elev >= ~30° the nearest post hangs below
-  // the frame bottom at every tested lift — verified in the fit simulator).
-  viewDirTall: [0.34, 0.42, 0.74],
+  // Tall elevation ~20° (Task 6 portrait re-tighten, was ~27°). With the
+  // horizon pinned by horizonFracTall, the subject sits BELOW the horizon by
+  // roughly the camera's elevation angle — so a steeper tall view pushes the
+  // subject toward (and at ~35°, off) the bottom edge, while a shallower one
+  // rides it up toward the horizon and closes the empty mid-ground band that
+  // portrait showed. With the tight portrait core (harvester + Harkonnen
+  // line) the frame fill comes from the machine's own side-on silhouette,
+  // which also reads best at a low angle. Verified at 430x932/360x780: the
+  // machine is centered, the worm breach fills the former dead band, and the
+  // horizon + sky stay clearly in frame.
+  viewDirTall: [0.34, 0.30, 0.74],
   fov: 52,
   // Fit margin, aspect-blended (framing.js fitFocus): slightly tight (<1) at
   // landscape — the box fit is conservative there because the battlefield's
@@ -134,8 +149,11 @@ export const FOCUS = {
   // true horizon at this fraction of frame height from the top — horizon in
   // the upper band, dead foreground cropped, at EVERY aspect. Blended:
   // landscape sits the horizon a touch lower to crop its deeper foreground.
+  // (Tall 0.30 -> 0.28 in the Task 6 portrait re-tighten: with the shallower
+  // viewDirTall the whole composition rides higher, and 0.28 keeps the sky
+  // band from creeping past ~a third of a phone frame.)
   horizonFracWide: 0.38,
-  horizonFracTall: 0.30,
+  horizonFracTall: 0.28,
 };
 
 // Single source of truth for the world-space sun direction (fix round 1,

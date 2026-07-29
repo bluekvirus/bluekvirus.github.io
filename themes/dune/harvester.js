@@ -295,6 +295,29 @@ function buildHullGeometry() {
   merged.computeVertexNormals();
   bakeWeathering(merged);
 
+  // Task 6 polish: re-darken the intake mouth AFTER the weathering bake.
+  // The mouth ring/throat sit at y ~= 3.5, where the bake's low-altitude
+  // kicked-up-dust term (lowDust, y < 22) lerps everything heavily back
+  // toward hullSand — which is why the funnel read subtly at native
+  // resolution despite being painted hullUnder. A radial hullUnder re-coat
+  // around the mouth center restores the dark "hole in the machine" read
+  // that establishes front/back at a glance, while the dusted cone above it
+  // keeps the desert-scour look.
+  {
+    const pos = merged.attributes.position;
+    const col = merged.attributes.color;
+    const under = new THREE.Color(COLORS.hullUnder);
+    const c = new THREE.Color();
+    const R = 13; // covers mouth ring + throat + funnel tip, not the struts
+    for (let i = 0; i < pos.count; i++) {
+      const d = Math.hypot(pos.getX(i) - mouthX, pos.getY(i) - mouthY, pos.getZ(i));
+      if (d >= R) continue;
+      c.setRGB(col.getX(i), col.getY(i), col.getZ(i));
+      c.lerp(under, 0.85 * (1 - d / R));
+      col.setXYZ(i, c.r, c.g, c.b);
+    }
+  }
+
   return {
     geometry: merged,
     // spark sites: intake mouth, fore hip joints, a stack top, cab roof
