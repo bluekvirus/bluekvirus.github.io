@@ -1,4 +1,5 @@
 import { createStage, attachTurntable, standOnBase } from './stage.js';
+import { createReloadClip } from './reload.js';
 
 const MODEL = { dir: './assets/quaternius/', file: 'Swat.gltf' };
 
@@ -9,6 +10,7 @@ const STAGES = [
   { label: 'Idle', clip: 'Idle' },
   { label: 'Hold gun', clip: 'Idle_Gun' },
   { label: 'Aim', clip: 'Idle_Gun_Pointing' },
+  { label: 'Reload', clip: 'Reload' },
   { label: 'Walk', clip: 'Walk' },
   { label: 'Run', clip: 'Run' },
   { label: 'Run + fire', clip: 'Run_Shoot' },
@@ -55,6 +57,10 @@ BABYLON.SceneLoader.ImportMeshAsync('', MODEL.dir, MODEL.file, scene)
   .then((result) => {
     // The loader auto-starts clips; take control before anything is visible.
     for (const g of scene.animationGroups) g.stop();
+
+    // Hand-authored clips, keyed as deltas from poses in the imported set.
+    const idleGun = scene.animationGroups.find((g) => g.name === 'Idle_Gun');
+    if (idleGun) createReloadClip(scene, result.skeletons[0], idleGun);
 
     const root = new BABYLON.TransformNode('figure', scene);
     const drawable = result.meshes.filter((m) => m.getTotalVertices() > 0);
