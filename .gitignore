@@ -1,0 +1,5 @@
+.DS_Store
+.claude/worktrees/
+
+# Style reference images (third-party promotional art — local only, never published)
+refs/
