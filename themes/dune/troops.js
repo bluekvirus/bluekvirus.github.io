@@ -167,6 +167,72 @@ const FIRE_WINDOW = 2.0;    // seconds of firing=true within a Fremen hold
 const BOB_AMT = 0.32;       // crouch-run bob height
 const BOB_CYCLES = 3;       // bob bounces per dash
 
+// Each fremenCover point is shared by exactly 3 units (route indices i,
+// (i+3)%10, (i+7)%10). Several mitigations were tried and rejected before
+// this one:
+//  - A single shared "slot angle" (k*120°) per point, offset the same way
+//    for whichever unit holds that slot: this only separates the HOLD
+//    positions. A unit's dash between two of its own cover stops is a
+//    straight line, and because the ten units' 3-point routes ((i, i+3, i+7)
+//    mod 10) weave through a shared 10-point layout, a unit's dash can pass
+//    close to a *different* unit's unrelated hold point or dash line simply
+//    from incidental map geometry (verified concretely: unit 3's dash from
+//    cover 6 to cover 0 — an edge that shares no endpoint with unit 0's
+//    route at all — passes within ~0.4 units of unit 0's hold point at cover
+//    3, because cover 3 happens to sit almost exactly on that line).
+//  - A single constant personal offset per unit (applied at all 3 of its
+//    stops, so every dash is a rigid translation of the raw segment): a
+//    full point-in-plane check showed the raw 10-point, jump-3/jump-7 route
+//    layout has 38 pairs of *genuinely crossing* dash segments (not just
+//    shared endpoints) — a topological fact a same-unit rigid translation
+//    cannot undo.
+//  - An independently-solved per-(unit, stop) offset that only maximized the
+//    *minimum pairwise distance among the 30 resulting hold points* (11.1
+//    world units): this geometrically guarantees holds never coincide, but
+//    a 120s/0.2s sweep against the live page (the same check the acceptance
+//    criteria run) still found Fremen pairs down to <1 world unit apart —
+//    hold-point separation says nothing about two units' *dash* segments
+//    (or a dash crossing another unit's hold) grazing each other at some
+//    shared instant.
+//
+// FREMEN_WP_OFFSET below is instead the result of an offline force-directed
+// relaxation (see the one-off solver script referenced in
+// task-4-report.md's fix addendum): starting from a random per-(unit, stop)
+// offset, it repeatedly samples the full 120s cycle, finds every
+// close-approach event between any two units' *actual continuous
+// positions* (dash or hold), and nudges the waypoint(s) responsible for
+// each unit's position at that instant directly apart along the
+// line connecting them — i.e. it optimizes against the real moving-point
+// trajectories, not just the static hold points, so it also resolves
+// dash-vs-dash and dash-vs-hold grazing. Offsets are clamped to a 3-20
+// world-unit radius (a bit past the brief's "4-8" example — needed for a
+// couple of stops with especially bad raw topology — but still small
+// against the 21-53 unit gaps to every *other* cover point, so each stop
+// still unambiguously reads as "near its intended cover point," never as
+// having wandered to a neighboring one).
+//
+// Verified (against this exact table): minimum pairwise Fremen distance
+// across a 120s sweep is ~4.26 world units at the required 0.2s step, and
+// stays ~3.90-3.95 even resampled at 0.005-0.001s (i.e. the margin holds
+// under much finer time resolution than the acceptance check uses, not just
+// at the sampled instants) — comfortably clear of the 3-unit sweep
+// threshold and the 4-unit frozen-frame threshold. Tied to the current
+// LAYOUT.fremenCover coordinates and the seedFrac-derived dashDur/holdDur/
+// phase constants above — if either changes materially, regenerate this
+// table.
+const FREMEN_WP_OFFSET = [
+  [{ angle: -0.3253, radius: 7.9497 }, { angle: 0.0678, radius: 9.3345 }, { angle: 2.5224, radius: 6.5872 }],
+  [{ angle: 3.0150, radius: 4.8544 }, { angle: -2.5486, radius: 7.6728 }, { angle: 1.5258, radius: 3.0560 }],
+  [{ angle: -0.9338, radius: 4.8304 }, { angle: 1.6034, radius: 9.6735 }, { angle: 1.8914, radius: 10.3320 }],
+  [{ angle: 1.8048, radius: 10.6196 }, { angle: 1.2808, radius: 9.8536 }, { angle: 1.1572, radius: 6.1083 }],
+  [{ angle: 0.9718, radius: 7.1602 }, { angle: -2.6265, radius: 13.8610 }, { angle: 0.5740, radius: 10.6559 }],
+  [{ angle: -2.7443, radius: 9.9270 }, { angle: -2.0100, radius: 9.8640 }, { angle: -2.3194, radius: 14.0623 }],
+  [{ angle: -0.8360, radius: 4.1583 }, { angle: 1.0977, radius: 8.7630 }, { angle: -2.8800, radius: 8.4129 }],
+  [{ angle: 0.8272, radius: 15.1218 }, { angle: 2.5202, radius: 10.3507 }, { angle: 2.9923, radius: 11.9083 }],
+  [{ angle: -1.9017, radius: 8.3307 }, { angle: 2.3479, radius: 7.6668 }, { angle: 0.3335, radius: 7.4045 }],
+  [{ angle: -0.5600, radius: 8.9092 }, { angle: 1.1005, radius: 11.2352 }, { angle: 2.7378, radius: 5.9286 }],
+];
+
 // Fixed "face the enemy" targets: Harkonnen aim toward the Fremen cover
 // cluster's centroid; Fremen aim toward the Harkonnen arc's center.
 const TARGET_FOR_HARK = (() => {
@@ -230,7 +296,14 @@ export function createTroops() {
   const fremenConfigs = [];
   for (let i = 0; i < FREMEN_COUNT; i++) {
     const n = LAYOUT.fremenCover.length;
-    const wp = [LAYOUT.fremenCover[i % n], LAYOUT.fremenCover[(i + 3) % n], LAYOUT.fremenCover[(i + 7) % n]];
+    const routeIdx = [i % n, (i + 3) % n, (i + 7) % n];
+    // De-conflict shared cover points: offset each of this unit's 3 stops by
+    // its own independently-solved (angle, radius) — see FREMEN_WP_OFFSET.
+    const wp = routeIdx.map((c, k) => {
+      const [cx, cz] = LAYOUT.fremenCover[c];
+      const off = FREMEN_WP_OFFSET[i][k];
+      return [cx + Math.cos(off.angle) * off.radius, cz + Math.sin(off.angle) * off.radius];
+    });
     const dashDur = 1.0 + seedFrac(i, 1) * 0.4;       // ~1.0-1.4s
     const holdDur = 3 + seedFrac(i, 2) * 2;           // 3-5s
     const fireStart = (holdDur - FIRE_WINDOW) / 2;    // centered fire window
