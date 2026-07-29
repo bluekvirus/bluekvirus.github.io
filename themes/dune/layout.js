@@ -10,6 +10,9 @@ export const LAYOUT = {
     [175, -245], [215, -260],
   ],
   worm: { cx: -100, cz: -950, r: 500 },
+  // Two wrecked-vehicle smoke-column sites flanking the Harkonnen arc's
+  // ends (battle-damage story) — coordinates only, FX lives in combatfx.js.
+  wrecks: [[58, -316], [17, -184]],
   camBase: [60, 55, -60],
   camTarget: [-30, 22, -280],
 };

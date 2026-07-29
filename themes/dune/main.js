@@ -10,6 +10,7 @@ import { createWorm } from './worm.js';
 import { createProps } from './props.js';
 import { createHarvester } from './harvester.js';
 import { createTroops } from './troops.js';
+import { createCombatFX } from './combatfx.js';
 
 const FROZEN_TIME = 9; // elapsed seconds shown when prefers-reduced-motion
 const CAM_BASE = new THREE.Vector3(...LAYOUT.camBase);
@@ -83,6 +84,10 @@ export async function mount(container) {
   const props = createProps({ small: state.small });
   scene.add(props.group);
   state.updaters.push(props);
+
+  const fx = createCombatFX(troops.units);
+  scene.add(fx.group);
+  state.updaters.push(fx);
 
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
