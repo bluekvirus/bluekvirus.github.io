@@ -29,14 +29,8 @@ export const GUN_CLIPS = new Set([
 // down the thigh, slightly rearward. World units are readable; the bone-local
 // numbers that produce them are not, so they are derived below rather than
 // written here.
-const HOLSTER_OFFSET = new BABYLON.Vector3(0.114, -0.205, -0.053);
+const HOLSTER_OFFSET = new BABYLON.Vector3(0.105, -0.16, -0.01);
 
-// The weapon's own axes, measured from its geometry: X is the barrel (0.252
-// long), Y is the flat of the slide (0.065 thick), Z runs grip-to-slide
-// (0.179). A holstered sidearm points the barrel down and lays the flat
-// against the leg, which is exactly the basis built in orientHolster().
-const BARREL_WORLD = new BABYLON.Vector3(0, -0.965, -0.262); // down, slight rearward cant
-const FLAT_WORLD = new BABYLON.Vector3(1, 0, 0); // outboard, so the slide lies on the thigh
 
 function rigOnBone(scene, name, skeleton, boneName, carrier) {
   const bone = skeleton.bones.find((b) => b.name === boneName);
@@ -71,23 +65,20 @@ function seatOnThigh(rig, bone, carrier, meshes) {
     rig.computeWorldMatrix(true);
   }
 
-  // 1. Orientation. With identity local rotation the rig carries whatever the
-  //    bone imposes; measure that, then cancel it out of the wanted basis.
-  const boneRot = new BABYLON.Quaternion();
-  rig.getWorldMatrix().decompose(undefined, boneRot, undefined);
-
-  const x = BARREL_WORLD.clone().normalize();
-  const z = BABYLON.Vector3.Cross(x, FLAT_WORLD).normalize();
-  const y = BABYLON.Vector3.Cross(z, x).normalize();
-  const basis = new BABYLON.Matrix();
-  BABYLON.Matrix.FromXYZAxesToRef(x, y, z, basis);
-  const want = new BABYLON.Quaternion();
-  basis.decompose(undefined, want, undefined);
-  rig.rotationQuaternion = BABYLON.Quaternion.Inverse(boneRot).multiply(want);
+  // 1. Orientation. Found by search, not derived: with the mirror cancelled,
+  //    a quarter turn about local Y then local Z lands the barrel pointing
+  //    down (world −0.91 on Y) with the flat of the slide facing outboard
+  //    (world 0.99 on X) — a holstered sidearm.
+  //
+  //    Deriving this analytically was attempted and abandoned. Composing a
+  //    wanted world basis through the bone's rotation gave a horizontal
+  //    weapon in both multiplication orders, because this chain's conventions
+  //    do not survive the decompose round-trip. Sweeping the 64 axis-aligned
+  //    orientations and scoring each against "barrel down, flat outboard"
+  //    found the answer immediately and is trivially verifiable.
+  rig.rotationQuaternion = BABYLON.Quaternion.FromEulerAngles(0, Math.PI / 2, Math.PI / 2);
   rig.computeWorldMatrix(true);
 
-  // 2. Position. Convert the wanted world displacement into rig-local space by
-  //    undoing the bone's rotation and scale.
   const centre = () => {
     let mn = null;
     let mx = null;
