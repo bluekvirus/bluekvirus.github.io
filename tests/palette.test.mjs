@@ -123,3 +123,8 @@ test('hullDark and harkRed remain for troops and the escort ornithopter', () => 
   assert.equal(COLORS.hullDark, 0x2b2430);
   assert.equal(COLORS.harkRed, 0xd4353a);
 });
+
+// Task 4: Harkonnen escort ornithopter — cold metallic trim, value-only.
+test('hullTrim (cold metallic trim for the escort ornithopter) is added', () => {
+  assert.equal(COLORS.hullTrim, 0x6e6e6e);
+});

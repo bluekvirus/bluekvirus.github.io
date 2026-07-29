@@ -10,6 +10,7 @@ import { createTerrain } from './terrain.js';
 import { createWorm } from './worm.js';
 import { createProps } from './props.js';
 import { createHarvester } from './harvester.js';
+import { createThopter } from './thopter.js';
 import { createTroops } from './troops.js';
 import { createCombatFX } from './combatfx.js';
 
@@ -126,6 +127,16 @@ export async function mount(container) {
   const harvester = createHarvester();
   scene.add(harvester.group);
   state.updaters.push(harvester);
+
+  // Harkonnen escort ornithopter (Task 4): the black rotorcraft is what
+  // makes the operation read Harkonnen at a glance — the harvester itself
+  // is deliberately sand-colored, not black (see harvester.js). Kept as
+  // state.thopter so a later task (combat FX / living attrition) can read
+  // its live `muzzle`/`strafing` without re-deriving them.
+  const thopter = createThopter();
+  scene.add(thopter.group);
+  state.updaters.push(thopter);
+  state.thopter = thopter;
 
   const troops = createTroops();
   scene.add(troops.group);

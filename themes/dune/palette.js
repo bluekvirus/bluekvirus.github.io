@@ -14,6 +14,10 @@ export const COLORS = {
   sunlight: 0xfff4e2,
   hullDark: 0x2b2430,
   harkRed: 0xd4353a,
+  // Task 4: cold metallic trim for the Harkonnen escort ornithopter — the
+  // dossier's "cold metallic trim #6E6E6E", distinct from smokeGrey's
+  // purple-tinted explosion smoke. Value-only grey, no saturated tint.
+  hullTrim: 0x6e6e6e,
   // Task 3: the film harvester is sun-bleached sand/khaki, NOT Harkonnen
   // black (hullDark/harkRed stay for the troops and the escort ornithopter).
   hullSand: 0xc7a876,

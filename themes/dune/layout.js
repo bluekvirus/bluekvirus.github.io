@@ -10,6 +10,23 @@ export const LAYOUT = {
     [175, -245], [215, -260],
   ],
   worm: { cx: -100, cz: -950, r: 500 },
+  // Task 4: Harkonnen escort ornithopter patrol. An elliptical orbit centered
+  // behind/around the harvester (harvester {x:-40,z:-280}) so the escort
+  // reads as guarding it rather than wandering — the ellipse spans roughly
+  // x -150..+10, z -350..-240, encompassing the harvester itself. Altitude
+  // is an absolute world-Y cruise band well above the ~62-unit-tall
+  // harvester superstructure (Task 3's stack tops sit at y~62). Every
+  // strafeInterval seconds the thopter peels off toward strafeTarget (a
+  // point on the mid Fremen line, averaged from the near fremenCover
+  // cluster above) for strafeDuration seconds, blended in/out over
+  // strafeBlend seconds so the hand-off between orbit and dive is seamless
+  // (see thopter.js strafeWindow/computePos).
+  thopter: {
+    cx: -70, cz: -295, rx: 80, rz: 55,
+    altMin: 95, altMax: 132, cycle: 30,
+    strafeInterval: 20, strafeWindowStart: 6, strafeDuration: 5, strafeBlend: 1.3,
+    strafeTarget: { x: 155, z: -262 }, strafeAlt: 45,
+  },
   // Two wrecked-vehicle smoke-column sites flanking the Harkonnen arc's
   // ends (battle-damage story) — coordinates only, FX lives in combatfx.js.
   wrecks: [[58, -316], [17, -184]],
