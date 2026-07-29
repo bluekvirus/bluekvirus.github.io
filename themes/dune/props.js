@@ -35,10 +35,13 @@ export function createProps({ small = false } = {}) {
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     // The worksite bed is ~200 units from camera, so per-point screen size is
-    // large; small size + low opacity keep the additive sum subtle.
+    // large. Noon rebalance: additive blending (dusk-era) summed toward pale
+    // near-white against the now-bright sand background instead of reading
+    // as copper — normal blending shows the true rust/copper hue so the bed
+    // separates from the sand by colour, not just brightness.
     const pts = new THREE.Points(geo, new THREE.PointsMaterial({
-      size: bed.dense ? 1.1 : 2.2, vertexColors: true, transparent: true, opacity: 0.45,
-      blending: THREE.AdditiveBlending, depthWrite: false,
+      size: bed.dense ? 1.1 : 2.2, vertexColors: true, transparent: true, opacity: 0.8,
+      depthWrite: false,
     }));
     group.add(pts);
     pointsList.push({ pts, count });
@@ -47,7 +50,7 @@ export function createProps({ small = false } = {}) {
   return {
     group,
     update(dt, elapsed) {
-      pointsList.forEach(({ pts }, i) => { pts.material.opacity = 0.38 + 0.14 * Math.sin(elapsed * 2 + i); });
+      pointsList.forEach(({ pts }, i) => { pts.material.opacity = 0.7 + 0.15 * Math.sin(elapsed * 2 + i); });
     },
     degrade() {
       for (const { pts, count } of pointsList) pts.geometry.setDrawRange(0, Math.floor(count / 2));

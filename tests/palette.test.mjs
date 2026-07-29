@@ -3,16 +3,13 @@ import assert from 'node:assert/strict';
 import * as palette from '../themes/dune/palette.js';
 const { COLORS } = palette;
 
-test('palette exposes the core spec colors', () => {
-  assert.equal(COLORS.sandLit, 0xe8763a);
-  assert.equal(COLORS.sandShadow, 0x4a2d5e);
-  assert.equal(COLORS.skyZenith, 0x12081f);
-  assert.equal(COLORS.horizon, 0xc2452e);
-  assert.equal(COLORS.amber, 0xffb347);
-  assert.equal(COLORS.starWhite, 0xffffff);
-  assert.equal(COLORS.sunlight, 0xffb36b);
-  assert.equal(COLORS.moonA, 0x9a9088);
-  assert.equal(COLORS.moonB, 0x837490);
+test('palette exposes the core spec colors (Task 2: harsh Arrakis noon)', () => {
+  assert.equal(COLORS.sandLit, 0xe6c088);
+  assert.equal(COLORS.sandShadow, 0x9a7550);
+  assert.equal(COLORS.skyZenith, 0x8fb8d8);
+  assert.equal(COLORS.horizon, 0xe8dcc2);
+  assert.equal(COLORS.amber, 0xd98f3a);
+  assert.equal(COLORS.sunlight, 0xfff4e2);
   assert.equal(COLORS.hullDark, 0x2b2430);
   assert.equal(COLORS.harkRed, 0xd4353a);
   assert.equal(COLORS.visorRed, 0xff3b30);
@@ -62,12 +59,12 @@ test('tracerFremen (pale tracer gold) is added', () => {
   assert.equal(COLORS.tracerFremen, 0xffd9a0);
 });
 
-test('wormHideDark is added', () => {
-  assert.equal(COLORS.wormHideDark, 0x3a2e28);
+test('wormHideDark is added, then lightened for daylight (Task 2)', () => {
+  assert.equal(COLORS.wormHideDark, 0x4a3a30);
 });
 
-test('wormHideLit is added', () => {
-  assert.equal(COLORS.wormHideLit, 0x6b5344);
+test('wormHideLit is added, then lightened for daylight (Task 2)', () => {
+  assert.equal(COLORS.wormHideLit, 0x7d6350);
 });
 
 test('wormMaw is added', () => {
@@ -76,4 +73,30 @@ test('wormMaw is added', () => {
 
 test('wormTeeth is added', () => {
   assert.equal(COLORS.wormTeeth, 0xcbb89a);
+});
+
+// Task 2: dusk -> harsh Arrakis noon. Night elements are deleted outright;
+// sand/sky/sun retune toward a bleached midday palette; the worm hide may
+// lighten slightly since real (daylight) light now does more of the work.
+test('moonA (night element) is removed for daylight', () => {
+  assert.equal('moonA' in COLORS, false);
+  assert.equal(COLORS.moonA, undefined);
+});
+
+test('moonB (night element) is removed for daylight', () => {
+  assert.equal('moonB' in COLORS, false);
+  assert.equal(COLORS.moonB, undefined);
+});
+
+test('starWhite (night element) is removed for daylight', () => {
+  assert.equal('starWhite' in COLORS, false);
+  assert.equal(COLORS.starWhite, undefined);
+});
+
+test('hazeWash is added for the daylight heat-haze fog', () => {
+  assert.equal(COLORS.hazeWash, 0xe0d2b6);
+});
+
+test('sunDisc is added for the sun billboard', () => {
+  assert.equal(COLORS.sunDisc, 0xfffdf5);
 });

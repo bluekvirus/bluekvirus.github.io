@@ -18,12 +18,18 @@ export function createTerrain() {
   const pos = geo.attributes.position, nrm = geo.attributes.normal;
   const colors = new Float32Array(pos.count * 3);
   const lit = new THREE.Color(COLORS.sandLit), shadow = new THREE.Color(COLORS.sandShadow);
-  const sun = new THREE.Vector3(-0.55, 0.5, 0.35).normalize();
+  // Near-overhead noon sun (matches the DirectionalLight direction in
+  // main.js, elevation ~70°) — kept here only to bias the baked vertex tint
+  // toward the same facets the real light will hit.
+  const sun = new THREE.Vector3(-0.274, 0.944, -0.183).normalize();
   const n = new THREE.Vector3(), c = new THREE.Color();
   for (let i = 0; i < pos.count; i += 3) {
     n.set(nrm.getX(i), nrm.getY(i), nrm.getZ(i));
     const noiseShade = Math.pow(Math.max(0, n.dot(sun)), 0.75);
-    const tint = 0.35 + 0.35 * noiseShade;
+    // Noon rebalance: narrower, lighter-based baked range than dusk — real
+    // directional + hemisphere light now supplies most of the contrast, so
+    // the bake only needs to nudge facets rather than carve deep shadow.
+    const tint = 0.55 + 0.25 * noiseShade;
     c.copy(shadow).lerp(lit, tint);
     for (let k = 0; k < 3; k++) colors.set([c.r, c.g, c.b], (i + k) * 3);
   }

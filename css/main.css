@@ -18,19 +18,24 @@ body.fallback { overflow: auto; }
 }
 #hud-nav { position: absolute; bottom: 24px; left: 28px; display: flex; flex-wrap: wrap; gap: 18px; max-width: calc(100vw - 56px); }
 #hud-nav a {
-  color: #e8d5b5; text-decoration: none; font-size: 13px;
+  /* Noon rebalance: the scene's ground plane is now bright ochre sand
+     instead of dark dusk purple, so the old pale-tan nav text (#e8d5b5)
+     nearly vanishes against it. Dark warm brown restores contrast against
+     bright sand; the shadow keeps it readable if it ever crosses the paler
+     sky band too. */
+  color: #3a2510; text-decoration: none; font-size: 13px;
   letter-spacing: .15em; text-transform: uppercase;
-  text-shadow: none;
+  text-shadow: 0 1px 2px rgba(255,244,226,.35);
   /* ≥44px tap target in both dimensions on every viewport (resolves parked
      v1 note), independent of the 13px visible text size — min-width matters
      for short labels like "CV" which would otherwise measure ~29px wide. */
   display: inline-flex; align-items: center; justify-content: center;
   min-height: 44px; min-width: 44px; padding: 0 4px;
 }
-#hud-nav a:hover { color: #ffb347; text-shadow: 0 0 8px rgba(255,179,71,.45); }
+#hud-nav a:hover { color: #7a3d10; text-shadow: 0 1px 2px rgba(255,244,226,.5); }
 #hud-copy {
   position: absolute; bottom: 24px; right: 28px; font-size: 11px;
-  color: rgba(238,238,238,.5); text-align: right; max-width: 45vw;
+  color: rgba(58,37,16,.7); text-align: right; max-width: 45vw;
 }
 #fallback { display: none; padding: 64px 32px; max-width: 640px; margin: 0 auto; }
 #fallback.visible { display: block; }

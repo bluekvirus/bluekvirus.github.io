@@ -325,7 +325,7 @@ function createPuffs() {
 function createExplosionShells() {
   const flashGeo = new THREE.IcosahedronGeometry(1, 1);
   const flashMat = new THREE.MeshBasicMaterial({
-    color: COLORS.starWhite, transparent: true, opacity: 0.28,
+    color: COLORS.sunDisc, transparent: true, opacity: 0.28,
     blending: THREE.AdditiveBlending, depthWrite: false,
   });
   const flashMesh = new THREE.InstancedMesh(flashGeo, flashMat, EXPLOSION_SLOTS);
@@ -335,7 +335,7 @@ function createExplosionShells() {
   const ringGeo = new THREE.RingGeometry(0.7, 1, 20);
   ringGeo.rotateX(-Math.PI / 2);
   const ringMat = new THREE.MeshBasicMaterial({
-    color: COLORS.starWhite, transparent: true, opacity: 0.5, side: THREE.DoubleSide,
+    color: COLORS.sunDisc, transparent: true, opacity: 0.5, side: THREE.DoubleSide,
     blending: THREE.AdditiveBlending, depthWrite: false,
   });
   const ringMesh = new THREE.InstancedMesh(ringGeo, ringMat, EXPLOSION_SLOTS);

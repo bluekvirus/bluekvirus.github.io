@@ -71,6 +71,9 @@ export async function mount(container) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, state.small ? 1 : 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  // Noon exposure: kept just under 1 so the near-overhead sun's highlights
+  // (sand, sun disc) don't clip to flat white.
+  renderer.toneMappingExposure = 0.95;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   container.appendChild(renderer.domElement);
@@ -81,17 +84,24 @@ export async function mount(container) {
   });
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(COLORS.horizon, 0.00035);
+  // Daylight heat haze: a lighter, denser distance wash than the dusk fog it
+  // replaces (still just a wash — sand itself never blooms).
+  scene.fog = new THREE.FogExp2(COLORS.hazeWash, 0.00042);
 
   const camera = new THREE.PerspectiveCamera(FOCUS.fov, window.innerWidth / window.innerHeight, 0.1, 8000);
   state.camera = camera;
   applyFraming(window.innerWidth, window.innerHeight);
   camera.position.copy(state.camBase);
 
-  scene.add(buildSky(), buildStars(), ...buildMoons());
+  // Night elements (stars, both moons) are deleted outright for noon; only
+  // the bleached sky dome and a small blown-out sun disc remain.
+  scene.add(buildSky(), buildSunDisc());
 
-  const sun = new THREE.DirectionalLight(COLORS.sunlight, 3.2);
-  sun.position.set(-460, 170, -80);
+  // Near-overhead noon sun: short, hard, high-contrast shadows. Position sits
+  // high and to the side (elevation ~70° as seen from the battle) with the
+  // target pinned on the battle center, same as the dusk-era aim point.
+  const sun = new THREE.DirectionalLight(COLORS.sunlight, 3.6);
+  sun.position.set(-180, 620, -120);
   sun.castShadow = true;
   const shadowSize = state.small ? 1024 : 2048;
   sun.shadow.mapSize.set(shadowSize, shadowSize);
@@ -104,7 +114,7 @@ export async function mount(container) {
   sun.shadow.bias = -0.0005;
   sun.target.position.set(30, 0, -270);
   scene.add(sun, sun.target);
-  scene.add(new THREE.HemisphereLight(COLORS.skyZenith, COLORS.dustTan, 0.38));
+  scene.add(new THREE.HemisphereLight(COLORS.skyZenith, COLORS.sandLit, 0.75));
   scene.add(createTerrain());
 
   const harvester = createHarvester();
@@ -132,10 +142,11 @@ export async function mount(container) {
   composer.addPass(new RenderPass(scene, camera));
   const bloomRes = new THREE.Vector2(window.innerWidth, window.innerHeight)
     .multiplyScalar(state.small ? 0.5 : 1);
-  // De-neon: bloom is the fire/heat device only — strength/threshold tuned
-  // so just genuinely bright diegetic emissives (muzzle flashes, explosions,
-  // engine glow, running lights) halo, nothing else.
-  composer.addPass(new UnrealBloomPass(bloomRes, 0.5, 0.55, 0.85));
+  // De-neon + noon: bloom is the fire/heat/sun-disc device only —
+  // strength/threshold raised so bright bleached sand (which fills far more
+  // of the frame at noon than at dusk) never blooms; only muzzle flashes,
+  // explosions, engine glow and the sun disc are hot enough to halo.
+  composer.addPass(new UnrealBloomPass(bloomRes, 0.35, 0.55, 0.95));
 
   Object.assign(state, { renderer, scene, camera, composer, clock: new THREE.Clock() });
 
@@ -185,30 +196,34 @@ function buildSky() {
   return new THREE.Mesh(new THREE.SphereGeometry(3500, 24, 16), mat);
 }
 
-function buildStars() {
-  const N = 600;
-  const pos = new Float32Array(N * 3);
-  for (let i = 0; i < N; i++) {
-    const a = Math.random() * Math.PI * 2;
-    const y = 150 + Math.random() * 2600;
-    const r = Math.sqrt(Math.max(0, 3200 * 3200 - y * y));
-    pos[i * 3] = Math.cos(a) * r;
-    pos[i * 3 + 1] = y;
-    pos[i * 3 + 2] = Math.sin(a) * r;
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  return new THREE.Points(geo, new THREE.PointsMaterial({
-    color: COLORS.starWhite, size: 2, transparent: true, opacity: 0.8, fog: false, sizeAttenuation: false,
+// Small blown-out sun disc, billboarded (THREE.Sprite auto-faces the camera
+// in its shader, so this costs zero per-frame JS) and placed along the same
+// direction as the sun DirectionalLight above, just inside the sky dome
+// radius (3500). The soft radial-gradient texture is built once here at
+// mount and never touched again — no per-frame allocation.
+function buildSunDisc() {
+  const dir = new THREE.Vector3(-180, 620, -120).normalize();
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const core = new THREE.Color(COLORS.sunDisc);
+  const edge = new THREE.Color(COLORS.sunlight);
+  const rgba = (c, a) => `rgba(${(c.r * 255) | 0},${(c.g * 255) | 0},${(c.b * 255) | 0},${a})`;
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, rgba(core, 1));
+  grad.addColorStop(0.45, rgba(edge, 0.6));
+  grad.addColorStop(1, rgba(edge, 0));
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture(canvas), transparent: true, fog: false, depthWrite: false,
+    blending: THREE.AdditiveBlending,
   }));
-}
-
-function buildMoons() {
-  const a = new THREE.Mesh(new THREE.IcosahedronGeometry(60, 1), new THREE.MeshBasicMaterial({ color: COLORS.moonA, fog: false }));
-  a.position.set(900, 700, -2600);
-  const b = new THREE.Mesh(new THREE.IcosahedronGeometry(36, 1), new THREE.MeshBasicMaterial({ color: COLORS.moonB, fog: false }));
-  b.position.set(-1200, 420, -2800);
-  return [a, b];
+  sprite.position.copy(dir).multiplyScalar(3000);
+  sprite.scale.set(260, 260, 1);
+  sprite.frustumCulled = false;
+  return sprite;
 }
 
 function onResize() {
