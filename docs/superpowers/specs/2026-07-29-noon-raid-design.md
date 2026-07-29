@@ -96,11 +96,27 @@ MENG kit proportions 100×65×27 mm ⇒ **L:W:H ≈ 3.7 : 2.4 : 1**; practical l
 - **Superstructure:** modest raised cab near the front quarter, exhaust stacks and
   vents aft, short sensor mast. (Undocumented in sources — plausible invention,
   kept subordinate to the slab silhouette.)
-- **Color — NOT black:** sun-bleached sand/khaki hull `#c7a876`, weathered rust-brown
-  panel grime `#7a5230`, bleached dust highlight `#e8d9b0`, dark undercarriage
-  `#3a2e22`. Heavy scouring/weathering via vertex-color variation; no clean surfaces.
-- **Harkonnen identity moves to the escorts** (see §4) — the films never repaint the
-  harvester in Harkonnen black.
+- **Locomotion — LEGS, not tracks** (corrected 2026-07-29 from a second research pass):
+  Dune: Part Two has a distinct **Harkonnen Spice Harvester** design (George Hull, under
+  Vermette) that walks on massive legs. SFX supervisor Gerd Netzer: the legs are *"sixty
+  feet wide and thirty feet high"*; a pair were built in steel and mounted on two 100-ton
+  excavators to simulate the gait. The body is "as big as a soundstage" and the finished
+  CG machine is *"three times higher, three times wider, and five times longer"* than the
+  practical rig (Paul Lambert). Paul and Chani shelter **behind a leg** during the raid —
+  the open shadowed gap beneath the hull is the silhouette's signature and must read
+  clearly. Model splayed legs carrying the body high off the sand, not ground-hugging
+  track housings.
+- **Color — dark Harkonnen structure, sand-scoured** (controller ruling 2026-07-29,
+  superseding this spec's original "sand, NOT black"): base the hull on `#7a5230`
+  grime / `#3a2e22` undercarriage tones, with `#c7a876` sand and `#e8d9b0` bleach as
+  heavy dust-and-scour accumulation on upper surfaces, leading edges and legs. Rationale:
+  the request is specifically the Harkonnen machine and no accessible source documents
+  this design's actual livery; the earlier "sand, not black" line came from general
+  Arrakis-palette doctrine. Target: a menacing dark machine *wearing* the desert —
+  neither a clean black box nor a uniformly tan one. Heavy weathering via vertex-color
+  variation; no clean surfaces.
+- **Harkonnen identity is reinforced by the escorts** (see §4), not carried by the
+  harvester's paint alone.
 - Retains: intake dust plume, running lights (dimmed for daylight), engine heat glow.
 
 ## 4. Harkonnen escort ornithopter
