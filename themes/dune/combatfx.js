@@ -45,13 +45,24 @@ const WRECK_TOTAL = WRECK_PER_COL * 2; // two persistent columns
 const WRECK_SPAWN_RATE = 4.5; // particles/sec per column — thin wisp, not a
 const WRECK_LIFE = 2.6;       // solid additive-overlapped bar (see round 2)
 
-// One shared Points buffer, sub-sliced (mirrors worm.js's SPRAY/WAKE split):
-// [0, EXPLOSION_SMOKE_TOTAL) explosion smoke (block-per-slot),
-// [DUST_START, DUST_START+IMPACT_COUNT) tracer-impact dust ring buffer,
-// [WRECK_START, WRECK_START+WRECK_TOTAL) two wreck-smoke ring buffers.
-const DUST_START = EXPLOSION_SMOKE_TOTAL;
-const WRECK_START = DUST_START + IMPACT_COUNT;
-const PUFF_TOTAL = WRECK_START + WRECK_TOTAL;
+// One shared Points buffer, sub-sliced (mirrors worm.js's SPRAY/WAKE split).
+// Order is deliberate, NOT arbitrary: degrade() truncates this buffer's draw
+// range from the tail, so the most essential content sits first and the
+// heaviest/least essential sits last, making the halved range still read
+// correctly instead of just chopping off whatever happened to be at the end.
+// [0, WRECK_START+WRECK_TOTAL) two persistent wreck-smoke ring buffers —
+//   the "battle damage" columns are a brief requirement and must survive a
+//   degrade() halving intact.
+// [DUST_START, DUST_START+IMPACT_COUNT) tracer-impact dust ring buffer —
+//   secondary but still visible; mostly survives a halving.
+// [SMOKE_START, PUFF_TOTAL) explosion smoke (block-per-slot) — heaviest
+//   (120 of 248 slots) and least essential to keep every particle of; first
+//   to be sacrificed when the range is halved (explosions still read via
+//   their flash+ring InstancedMeshes, which are untouched by this degrade).
+const WRECK_START = 0;
+const DUST_START = WRECK_START + WRECK_TOTAL;
+const SMOKE_START = DUST_START + IMPACT_COUNT;
+const PUFF_TOTAL = SMOKE_START + EXPLOSION_SMOKE_TOTAL;
 
 // ---- pooled: tracers (LineSegments, 1 draw call) ----
 
@@ -180,8 +191,10 @@ function createFlashes() {
 }
 
 // ---- pooled: shared smoke/dust (Points, 1 draw call) ----
-// One buffer, three reserved slices: explosion smoke (block-per-slot),
-// tracer-impact dust (ring buffer), wreck-column smoke (2 ring buffers).
+// One buffer, three reserved slices, ordered essential-first (see the
+// WRECK_START/DUST_START/SMOKE_START block below for why): wreck-column
+// smoke (2 ring buffers), tracer-impact dust (ring buffer), explosion smoke
+// (block-per-slot).
 
 function createPuffs() {
   const positions = new Float32Array(PUFF_TOTAL * 3).fill(-99999);
@@ -206,7 +219,7 @@ function createPuffs() {
   }
 
   function spawnSmokeBlock(slot, x, y, z, seedBase) {
-    const block = slot * EXPLOSION_SMOKE_PER;
+    const block = SMOKE_START + slot * EXPLOSION_SMOKE_PER;
     for (let k = 0; k < EXPLOSION_SMOKE_PER; k++) {
       const idx = block + k;
       const a = seedFrac(seedBase + k, 61) * Math.PI * 2;
@@ -276,15 +289,15 @@ function createPuffs() {
       life[i] -= dt;
       const j = i * 3;
       if (i < DUST_START) {
-        // explosion smoke: buoyant rise, drag-expand, settles slowly
-        velocities[j] *= 0.97; velocities[j + 2] *= 0.97;
-        velocities[j + 1] *= 0.985;
-      } else if (i < WRECK_START) {
+        // wreck column: gentle rise + steady drift, thins out (no gravity)
+        velocities[j] *= 0.99; velocities[j + 1] *= 0.995; velocities[j + 2] *= 0.99;
+      } else if (i < SMOKE_START) {
         // impact dust: quick outward kick, gravity-settled
         velocities[j + 1] -= 5 * dt;
       } else {
-        // wreck column: gentle rise + steady drift, thins out (no gravity)
-        velocities[j] *= 0.99; velocities[j + 1] *= 0.995; velocities[j + 2] *= 0.99;
+        // explosion smoke: buoyant rise, drag-expand, settles slowly
+        velocities[j] *= 0.97; velocities[j + 2] *= 0.97;
+        velocities[j + 1] *= 0.985;
       }
       positions[j] += velocities[j] * dt;
       positions[j + 1] += velocities[j + 1] * dt;
