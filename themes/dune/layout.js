@@ -16,18 +16,57 @@ export const LAYOUT = {
   // Bounding box explosions are scattered within — coordinates only, FX
   // (timing/pools/rendering) lives in combatfx.js.
   battlefield: { x: [-20, 220], z: [-330, -200] },
-  camBase: [60, 55, -60],
-  // camTarget.x nudged -30 → -15 (with fov 55 → 58 in main.js) so the Fremen
-  // cover field (x ∈ [85, 230]) is mostly in frame instead of ~3/10 waypoints;
-  // harvester stays left-of-center per spec.
-  camTarget: [-15, 22, -280],
-  // Aspect-aware framing (Task 3): at aspect >= wideAspect the wide framing
-  // above (camBase/fovWide) is used unchanged. As aspect narrows toward
-  // narrowAspect (~phone portrait, e.g. 390x844 = 0.462), main.js's
-  // computeFraming() lerps fov toward fovNarrow and scales the camBase→
-  // camTarget offset by up to pullbackNarrow, pulling the camera back along
-  // its existing look direction so the harvester + firefight + worm horizon
-  // stay in frame despite the narrower horizontal FOV. Pure function of
-  // aspect only, evaluated on mount/resize — not per frame.
-  camFrame: { wideAspect: 1.4, narrowAspect: 0.46, fovWide: 58, fovNarrow: 74, pullbackNarrow: 1.55 },
+};
+
+// Subject-fit responsive framing (Task 1, v4). Replaces the old aspect-lerped
+// fov/camBase/camTarget/camFrame constants above: fov is now a fixed constant
+// and framing.js's fitCamera() computes a bounding sphere over FOCUS.core so
+// distance — not fov — adapts to aspect, filling the frame identically at
+// any window shape. main.js calls fitCamera(FOCUS.core, aspect, FOCUS) on
+// mount/resize. FOCUS.bonus (worm breach apex) is NEVER fed into the fit —
+// the core subject fit is never enlarged/sacrificed to include it; it's
+// framed only when it happens to fall inside the core-derived frustum for
+// free (see main.js's applyFraming()).
+export const FOCUS = {
+  // Literal world points (derived from harvester/harkArc/fremenCover above —
+  // kept as explicit literals so layout.js stays the single coordinate
+  // source; see task-1-report.md for the derivation).
+  core: [
+    // harvester hull extents (harvester {x:-40,z:-280,rotY:0.35} rotated) +
+    // top (mast)
+    [-15, 6, -289],   // nose / intake tip (fore)
+    [-64, 6, -271],   // rear hull (aft)
+    [-73, 36, -268],  // rear conveyor-arm apex (aft-top)
+    [-48, 6, -291],   // port track housing
+    [-39, 6, -266],   // starboard track housing
+    [-48, 38, -271],  // antenna mast top
+    // Harkonnen arc end posts + center (harkArc: cx:-10,cz:-265,r:70)
+    [51, 9, -299],
+    [22, 12, -203],
+    [57, 11, -244],
+    // Fremen engagement zone corners (bounding box of fremenCover above)
+    [85, 14, -215],
+    [230, 22, -320],
+    [85, 13, -320],
+    [230, 27, -215],
+  ],
+  // Worm breach apex (worm {cx:-100,cz:-950,r:500}, breach segment i=3 at
+  // angle π/2, lift +130) — bonus, framed only if it fits for free.
+  bonus: [-100, 123, -600],
+  // View direction, subject to camera (tuned during Task 1 visual
+  // iteration). Steep, near-overhead "war-table" angle. Trade-off (documented in
+  // task-1-report.md): with FOCUS.core spanning ~300 world units in X
+  // (harvester to the farthest Fremen post) but only ~38 in Y, no viewDir
+  // shallow enough to show sky (tilt < vFov/2 = 26°) can reach anywhere near
+  // the ≥55%-frame-height fill target — that requires tilt ~70-80°, which
+  // puts the horizon entirely above the frustum's top edge. This value
+  // clears the ≥55% fill / ≤15% empty-foreground bar at 6 of 8 tested
+  // aspects; the two narrowest phone portraits (430x932, 360x780) are
+  // mathematically capped at ~48.75% fill (proof: at fov=52 the achievable
+  // ceiling at aspect a<1 is atan(tan(26°)·a)/26°, independent of viewDir
+  // or FOCUS.core) — well short of 55% no matter how this is tuned.
+  viewDir: [0.18, 0.95, 0.03],
+  fov: 52,
+  margin: 1.02,
+  lookLift: 0.05,
 };

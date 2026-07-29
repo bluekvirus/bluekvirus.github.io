@@ -3,7 +3,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { COLORS } from './palette.js';
-import { LAYOUT } from './layout.js';
+import { FOCUS } from './layout.js';
+import { fitCamera } from './framing.js';
 import { showFallback } from '../../js/router.js';
 import { createTerrain } from './terrain.js';
 import { createWorm } from './worm.js';
@@ -13,53 +14,43 @@ import { createTroops } from './troops.js';
 import { createCombatFX } from './combatfx.js';
 
 const FROZEN_TIME = 9; // elapsed seconds shown when prefers-reduced-motion
-const CAM_BASE = new THREE.Vector3(...LAYOUT.camBase);
-const CAM_TARGET = new THREE.Vector3(...LAYOUT.camTarget);
-// Camera offset (target -> base) at the calibrated wide framing. Scaling this
-// vector and re-adding it to CAM_TARGET pulls the camera back along its
-// existing look direction without changing where it looks.
-const CAM_OFFSET = CAM_BASE.clone().sub(CAM_TARGET);
 
 const state = {
   renderer: null, scene: null, camera: null, composer: null, clock: null,
   rafId: 0, useComposer: true, reduced: false, small: false,
-  // Aspect-aware camera base the per-frame drift/parallax oscillates around
-  // (see tick()). Recomputed in applyFraming() on mount and on every resize
-  // (incl. orientation change) — never touched per frame.
+  // Subject-fit camera base (position) + look-at target the per-frame
+  // drift/parallax oscillates around (see tick()). Recomputed in
+  // applyFraming() on mount and on every resize (incl. orientation change)
+  // — never touched per frame. FOCUS.bonus (the worm) is deliberately never
+  // fed into the fit: the core subject fit is never sacrificed to keep the
+  // worm in frame — it's framed only when it happens to fall inside the
+  // core-derived frustum for free.
   camBase: new THREE.Vector3(),
+  camLookAt: new THREE.Vector3(),
+  // R/1000 from the fitted bounding sphere — drift/parallax amplitudes in
+  // tick() are multiplied by this so they stay proportional to the subject
+  // size/framing instead of a fixed absolute magnitude.
+  driftScale: 1,
   pointer: { x: 0, y: 0, tx: 0, ty: 0 },
   updaters: [],
   fps: { frames: 0, t: 0, lowSeconds: 0, degraded: 0 }, // degraded: stage counter 0|1|2
 };
 
-// Pure, deterministic function of aspect only: at wideAspect+ returns the
-// calibrated wide fov/base unchanged; as aspect narrows toward narrowAspect
-// it lerps fov up and scales the base outward along CAM_OFFSET (pull-back).
-// Called on mount and in onResize, never in tick() — zero per-frame cost.
-function computeFraming(aspect) {
-  const { wideAspect, narrowAspect, fovWide, fovNarrow, pullbackNarrow } = LAYOUT.camFrame;
-  const t = Math.min(1, Math.max(0, (wideAspect - aspect) / (wideAspect - narrowAspect)));
-  const fov = fovWide + (fovNarrow - fovWide) * t;
-  const scale = 1 + (pullbackNarrow - 1) * t;
-  return {
-    fov,
-    base: new THREE.Vector3(
-      CAM_TARGET.x + CAM_OFFSET.x * scale,
-      CAM_TARGET.y + CAM_OFFSET.y * scale,
-      CAM_TARGET.z + CAM_OFFSET.z * scale,
-    ),
-  };
-}
-
-// Applies computeFraming() to the live camera + state.camBase. Used at mount
-// and on every resize/orientation-change so framing stays live-responsive.
+// Bounding-sphere subject-fit framing (Task 1, v4): fov is fixed
+// (FOCUS.fov); fitCamera() computes the camera position/look-at so
+// FOCUS.core fills the frame identically at any aspect. Applies the result
+// to the live camera + state.camBase/camLookAt/driftScale. Called at mount
+// and on every resize/orientation-change so framing stays live-responsive
+// — never in tick(), so this is zero per-frame cost.
 function applyFraming(w, h) {
   const aspect = w / h;
-  const { fov, base } = computeFraming(aspect);
+  const fit = fitCamera(FOCUS.core, aspect, FOCUS);
   state.camera.aspect = aspect;
-  state.camera.fov = fov;
+  state.camera.fov = FOCUS.fov;
   state.camera.updateProjectionMatrix();
-  state.camBase.copy(base);
+  state.camBase.set(fit.position[0], fit.position[1], fit.position[2]);
+  state.camLookAt.set(fit.lookAt[0], fit.lookAt[1], fit.lookAt[2]);
+  state.driftScale = fit.R / 1000;
 }
 
 export async function mount(container) {
@@ -89,9 +80,9 @@ export async function mount(container) {
   const scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(COLORS.horizon, 0.00035);
 
-  const initFraming = computeFraming(window.innerWidth / window.innerHeight);
-  const camera = new THREE.PerspectiveCamera(initFraming.fov, window.innerWidth / window.innerHeight, 0.1, 8000);
-  state.camBase.copy(initFraming.base);
+  const camera = new THREE.PerspectiveCamera(FOCUS.fov, window.innerWidth / window.innerHeight, 0.1, 8000);
+  state.camera = camera;
+  applyFraming(window.innerWidth, window.innerHeight);
   camera.position.copy(state.camBase);
 
   scene.add(buildSky(), buildStars(), ...buildMoons());
@@ -248,12 +239,13 @@ function tick() {
 
   state.pointer.x += (state.pointer.tx - state.pointer.x) * 0.05;
   state.pointer.y += (state.pointer.ty - state.pointer.y) * 0.05;
+  const ds = state.driftScale;
   state.camera.position.set(
-    state.camBase.x + 12 * Math.sin(elapsed * 0.05) + state.pointer.x * 6,
-    state.camBase.y + 4 * Math.sin(elapsed * 0.083) - state.pointer.y * 4,
-    state.camBase.z + 8 * Math.cos(elapsed * 0.04),
+    state.camBase.x + 12 * ds * Math.sin(elapsed * 0.05) + state.pointer.x * 6 * ds,
+    state.camBase.y + 4 * ds * Math.sin(elapsed * 0.083) - state.pointer.y * 4 * ds,
+    state.camBase.z + 8 * ds * Math.cos(elapsed * 0.04),
   );
-  state.camera.lookAt(CAM_TARGET);
+  state.camera.lookAt(state.camLookAt);
 
   for (const u of state.updaters) u.update(edt, elapsed, state.camera);
 
