@@ -4,7 +4,7 @@ import { LAYOUT } from './layout.js';
 import { duneHeight } from './noise.js';
 
 const SEG_COUNT = 30;
-const SPACING = 0.014; // curve-parameter gap between segments
+const SPACING = 0.011; // curve-parameter gap between segments (~30 world units — must stay below the smallest segment diameter so the body reads continuous, not beads)
 const CYCLE = 55;      // seconds per full path loop — slow, distant approach
 const HEAD_SCALE = 37.5; // ~38, x2.5 of the original v1 head scale (15)
 
@@ -148,7 +148,7 @@ export function createWorm() {
       curve.getPointAt(t, _pos);
       curve.getTangentAt(t, _tan);
       _quat.setFromUnitVectors(Z_AXIS, _tan);
-      const s = HEAD_SCALE * (1 - (i / SEG_COUNT) * 0.75); // head ~38 → tail ~9.5
+      const s = HEAD_SCALE * (1 - (i / SEG_COUNT) * 0.55); // head ~38 → tail ~17 (diameter ~34 ≥ segment spacing, so no gaps)
       _scale.setScalar(s);
       _mat.compose(_pos, _quat, _scale);
       body.setMatrixAt(i, _mat);

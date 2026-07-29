@@ -24,12 +24,6 @@ body.fallback { overflow: auto; }
 }
 #hud-nav a:hover { color: #ff2e88; text-shadow: 0 0 8px rgba(255,46,136,.9); }
 #hud-copy { position: absolute; bottom: 24px; right: 28px; font-size: 11px; color: rgba(238,238,238,.5); }
-#hud-label {
-  position: absolute; top: 46%; left: 50%; transform: translate(-50%, -50%);
-  font-size: 14px; letter-spacing: .3em; color: #fff;
-  text-shadow: 0 0 10px rgba(255,46,136,.9);
-}
-
 #fallback { display: none; padding: 64px 32px; max-width: 640px; margin: 0 auto; }
 #fallback.visible { display: block; }
 #fallback h1 { color: #ffb347; margin-bottom: 12px; }

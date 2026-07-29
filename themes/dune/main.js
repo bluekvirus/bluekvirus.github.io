@@ -21,7 +21,7 @@ const state = {
   rafId: 0, useComposer: true, reduced: false, small: false,
   pointer: { x: 0, y: 0, tx: 0, ty: 0 },
   updaters: [],
-  fps: { frames: 0, t: 0, lowSeconds: 0, degraded: false },
+  fps: { frames: 0, t: 0, lowSeconds: 0, degraded: 0 }, // degraded: stage counter 0|1|2
 };
 
 export async function mount(container) {
@@ -46,7 +46,7 @@ export async function mount(container) {
   const scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(COLORS.horizon, 0.00035);
 
-  const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 8000);
+  const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 8000);
   camera.position.copy(CAM_BASE);
 
   scene.add(buildSky(), buildStars(), ...buildMoons());
@@ -101,7 +101,17 @@ export async function mount(container) {
   window.addEventListener('pointermove', onPointerMove);
   document.addEventListener('visibilitychange', () => (document.hidden ? stopLoop() : startLoop()));
 
-  if (new URLSearchParams(window.location.search).has('debug')) window.__arrakis = state;
+  if (new URLSearchParams(window.location.search).has('debug')) {
+    window.__arrakis = state;
+    // QA hook: advance the degrade ladder to stage n without waiting out the fps watchdog.
+    state.forceDegrade = (n) => {
+      while (state.fps.degraded < n && state.fps.degraded < 2) {
+        state.fps.degraded++;
+        if (state.fps.degraded === 1) applyDegradeStage1();
+        else applyDegradeStage2();
+      }
+    };
+  }
   startLoop();
 }
 
@@ -205,9 +215,11 @@ function tick() {
   else state.renderer.render(state.scene, state.camera);
 }
 
+// Two-stage watchdog: each stage trips after 3 *consecutive* seconds < 25 fps,
+// then the counter resets so stage 2 needs 3 more consecutive low seconds.
 function watchFps(dt) {
   const f = state.fps;
-  if (f.degraded) return;
+  if (f.degraded >= 2) return;
   f.frames++;
   f.t += dt;
   if (f.t < 1) return;
@@ -215,9 +227,24 @@ function watchFps(dt) {
   f.frames = 0;
   f.t = 0;
   f.lowSeconds = fps < 25 ? f.lowSeconds + 1 : 0;
-  if (f.lowSeconds >= 3) {
-    f.degraded = true;
-    state.useComposer = false; // emissives still read as neon, just without halo
-    for (const u of state.updaters) u.degrade && u.degrade();
-  }
+  if (f.lowSeconds < 3) return;
+  f.lowSeconds = 0;
+  f.degraded++;
+  if (f.degraded === 1) applyDegradeStage1();
+  else applyDegradeStage2();
+}
+
+function applyDegradeStage1() {
+  state.useComposer = false; // bloom off; emissives still read as neon, just without halo
+}
+
+function applyDegradeStage2() {
+  state.renderer.shadowMap.enabled = false;
+  state.renderer.shadowMap.autoUpdate = false;
+  // Materials compiled with shadow-map code must recompile for the toggle to
+  // take effect (one-time traversal, not per-frame).
+  state.scene.traverse((obj) => {
+    if (obj.material) obj.material.needsUpdate = true;
+  });
+  for (const u of state.updaters) u.degrade && u.degrade(); // FX pools halved
 }

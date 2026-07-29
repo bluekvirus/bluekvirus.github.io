@@ -165,9 +165,11 @@ function createPlume(source) {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage));
   geo.setDrawRange(0, COUNT);
+  // Normal (not additive) blending: intake dust should read as suspended sand
+  // catching the light, not a glowing spark spray competing with the tracers.
   const points = new THREE.Points(geo, new THREE.PointsMaterial({
-    color: COLORS.dustTan, size: 2.6, transparent: true, opacity: 0.42,
-    blending: THREE.AdditiveBlending, depthWrite: false,
+    color: COLORS.dustTan, size: 2.6, transparent: true, opacity: 0.3,
+    depthWrite: false,
   }));
   points.frustumCulled = false;
 

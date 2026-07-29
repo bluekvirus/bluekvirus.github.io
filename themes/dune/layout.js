@@ -14,5 +14,8 @@ export const LAYOUT = {
   // ends (battle-damage story) — coordinates only, FX lives in combatfx.js.
   wrecks: [[58, -316], [17, -184]],
   camBase: [60, 55, -60],
-  camTarget: [-30, 22, -280],
+  // camTarget.x nudged -30 → -15 (with fov 55 → 58 in main.js) so the Fremen
+  // cover field (x ∈ [85, 230]) is mostly in frame instead of ~3/10 waypoints;
+  // harvester stays left-of-center per spec.
+  camTarget: [-15, 22, -280],
 };
