@@ -18,8 +18,10 @@ export const COLORS = {
   // dossier's "cold metallic trim #6E6E6E", distinct from smokeGrey's
   // purple-tinted explosion smoke. Value-only grey, no saturated tint.
   hullTrim: 0x6e6e6e,
-  // Task 3: the film harvester is sun-bleached sand/khaki, NOT Harkonnen
-  // black (hullDark/harkRed stay for the troops and the escort ornithopter).
+  // Harvester hull. Per the v4 ruling: hullGrime/hullUnder are the BASE (dark
+  // Harkonnen structure); hullSand/hullBleach are heavy desert scour baked onto
+  // upper surfaces, leading edges and legs. hullDark/harkRed stay for the troops
+  // and the escort ornithopter.
   hullSand: 0xc7a876,
   hullGrime: 0x7a5230,
   hullBleach: 0xe8d9b0,

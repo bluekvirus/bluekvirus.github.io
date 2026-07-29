@@ -101,8 +101,10 @@ test('sunDisc is added for the sun billboard', () => {
   assert.equal(COLORS.sunDisc, 0xfffdf5);
 });
 
-// Task 3: film-accurate harvester hull tones. The machine is sand-colored —
-// deliberately color-matched to the desert — never Harkonnen black.
+// Task 3: film-accurate harvester hull tones. Per the recorded v4 ruling the hull
+// is DARK Harkonnen structure (hullGrime/hullUnder base) carrying heavy sand scour
+// (hullSand/hullBleach) on upper surfaces, leading edges and legs — a menacing
+// machine wearing the desert, neither a clean black box nor a uniformly tan one.
 test('hullSand (harvester khaki base) is added', () => {
   assert.equal(COLORS.hullSand, 0xc7a876);
 });

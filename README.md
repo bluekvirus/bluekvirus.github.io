@@ -2,8 +2,8 @@ bluekvirus.github.io
 ====================
 
 Tim Lauv's homepage — "Noon Raid": a low-poly Dune battle diorama rendered
-in three.js. Under a harsh Arrakis noon — bleached sky, blown-out sun disc,
-hot pale sand, short hard shadows — a Harkonnen spice-harvesting operation
+in three.js. Under a harsh Arrakis noon — bleached sky, hot pale sand,
+short hard shadows from a high sun — a Harkonnen spice-harvesting operation
 is caught in a Fremen ambush. The film's legged harvester (a dark,
 sand-scoured industrial slab walking on six massive legs) works a
 glittering spice bed while a black escort ornithopter patrols overhead and
