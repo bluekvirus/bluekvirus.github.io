@@ -1,5 +1,6 @@
 import { createStage, attachTurntable, standOnBase } from './stage.js';
 import { createReloadClip } from './reload.js';
+import { createWeapon, GUN_CLIPS } from './weapon.js';
 
 const MODEL = { dir: './assets/quaternius/', file: 'Swat.gltf' };
 
@@ -30,6 +31,7 @@ const stage = createStage({ scene, engine, canvas });
 const params = new URLSearchParams(location.search);
 
 let current = null; // active AnimationGroup
+let weapon = null; // drawn/holstered state, set once the model loads
 
 function play(name) {
   const group = scene.animationGroups.find((g) => g.name === name);
@@ -37,6 +39,9 @@ function play(name) {
   if (current && current !== group) current.stop();
   group.start(true, 1.0, group.from, group.to, false);
   current = group;
+  // The pistol is welded to the hand by the rig; draw it only for gun clips so
+  // he isn't punching, rolling or dying with a sidearm in his fist.
+  weapon?.setDrawn(GUN_CLIPS.has(name));
   return true;
 }
 
@@ -68,9 +73,13 @@ BABYLON.SceneLoader.ImportMeshAsync('', MODEL.dir, MODEL.file, scene)
       if (!m.parent) m.parent = root;
       m.receiveShadows = true;
     }
+    weapon = createWeapon(scene, result);
     for (const m of drawable) stage.shadows.addShadowCaster(m);
+    for (const m of weapon.allMeshes) stage.shadows.addShadowCaster(m);
 
-    standOnBase(root, drawable, 0.06);
+    // Measure the figure with the weapon holstered so a drawn pistol held out
+    // at arm's length can't drag the ground plane down.
+    standOnBase(root, drawable.filter((m) => !m.name.startsWith('Pistol')), 0.06);
 
     const bar = document.getElementById('clips');
     const mapped = new Set();
