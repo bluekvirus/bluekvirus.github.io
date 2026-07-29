@@ -21,9 +21,11 @@ body.fallback { overflow: auto; }
   color: #e8d5b5; text-decoration: none; font-size: 13px;
   letter-spacing: .15em; text-transform: uppercase;
   text-shadow: none;
-  /* ≥44px tap target on every viewport (resolves parked v1 note), independent
-     of the 13px visible text size. */
-  display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px;
+  /* ≥44px tap target in both dimensions on every viewport (resolves parked
+     v1 note), independent of the 13px visible text size — min-width matters
+     for short labels like "CV" which would otherwise measure ~29px wide. */
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 44px; min-width: 44px; padding: 0 4px;
 }
 #hud-nav a:hover { color: #ffb347; text-shadow: 0 0 8px rgba(255,179,71,.45); }
 #hud-copy {
