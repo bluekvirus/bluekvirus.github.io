@@ -18,19 +18,21 @@ export const LAYOUT = {
   battlefield: { x: [-20, 220], z: [-330, -200] },
 };
 
-// Subject-fit responsive framing (Task 1, v4). Replaces the old aspect-lerped
-// fov/camBase/camTarget/camFrame constants above: fov is now a fixed constant
-// and framing.js's fitCamera() computes a bounding sphere over FOCUS.core so
-// distance — not fov — adapts to aspect, filling the frame identically at
-// any window shape. main.js calls fitCamera(FOCUS.core, aspect, FOCUS) on
-// mount/resize. FOCUS.bonus (worm breach apex) is NEVER fed into the fit —
-// the core subject fit is never enlarged/sacrificed to include it; it's
-// framed only when it happens to fall inside the core-derived frustum for
-// free (see main.js's applyFraming()).
+// Subject-fit responsive framing (Task 1, v4 — amended). framing.js's
+// fitCamera() does a camera-space BOX fit over the selected FOCUS tiers
+// (see framing.js selectFocusPoints): distance — not fov — adapts to aspect,
+// and the VIEW DIRECTION itself is aspect-responsive (viewDirWide at
+// landscape, viewDirTall at phone portrait, smoothstep-blended between; see
+// framing.js viewDirForAspect). Hard constraint honored by both directions:
+// elevation stays well under 45°, so the horizon and sky are visible at
+// every aspect. main.js recomputes framing on mount/resize only.
 export const FOCUS = {
   // Literal world points (derived from harvester/harkArc/fremenCover above —
   // kept as explicit literals so layout.js stays the single coordinate
-  // source; see task-1-report.md for the derivation).
+  // source; y = duneHeight(x,z) + soldier headroom for troop positions).
+  //
+  // core — always framed: harvester hull extents, Harkonnen arc, and the
+  // NEAR Fremen positions (x <= 150).
   core: [
     // harvester hull extents (harvester {x:-40,z:-280,rotY:0.35} rotated) +
     // top (mast)
@@ -44,29 +46,55 @@ export const FOCUS = {
     [51, 9, -299],
     [22, 12, -203],
     [57, 11, -244],
-    // Fremen engagement zone corners (bounding box of fremenCover above)
-    [85, 14, -215],
-    [230, 22, -320],
-    [85, 13, -320],
-    [230, 27, -215],
+    // Near Fremen cover posts (fremenCover entries with x <= 150)
+    [85, 17, -235],
+    [110, 17, -300],
+    [140, 22, -215],
+    [120, 19, -255],
+  ],
+  // wide — far Fremen positions (fremenCover x > 150); appended to the fit
+  // only at aspect >= 1.0 (framing.js selectFocusPoints), so landscape shows
+  // the full engagement line and portrait shows a tighter slice of the same
+  // battle.
+  wide: [
+    [165, 21, -275],
+    [190, 20, -320],
+    [205, 27, -230],
+    [230, 27, -290],
+    [175, 24, -245],
+    [215, 26, -260],
   ],
   // Worm breach apex (worm {cx:-100,cz:-950,r:500}, breach segment i=3 at
-  // angle π/2, lift +130) — bonus, framed only if it fits for free.
+  // angle π/2, lift +130) — bonus, NEVER fed into the fit (it would more
+  // than double the forward extent); framed only when it fits for free.
   bonus: [-100, 123, -600],
-  // View direction, subject to camera (tuned during Task 1 visual
-  // iteration). Steep, near-overhead "war-table" angle. Trade-off (documented in
-  // task-1-report.md): with FOCUS.core spanning ~300 world units in X
-  // (harvester to the farthest Fremen post) but only ~38 in Y, no viewDir
-  // shallow enough to show sky (tilt < vFov/2 = 26°) can reach anywhere near
-  // the ≥55%-frame-height fill target — that requires tilt ~70-80°, which
-  // puts the horizon entirely above the frustum's top edge. This value
-  // clears the ≥55% fill / ≤15% empty-foreground bar at 6 of 8 tested
-  // aspects; the two narrowest phone portraits (430x932, 360x780) are
-  // mathematically capped at ~48.75% fill (proof: at fov=52 the achievable
-  // ceiling at aspect a<1 is atan(tan(26°)·a)/26°, independent of viewDir
-  // or FOCUS.core) — well short of 55% no matter how this is tuned.
-  viewDir: [0.18, 0.95, 0.03],
+  // Aspect-responsive view directions (subject -> camera), blended by
+  // framing.js viewDirForAspect(). Both keep the horizon in frame:
+  //  - viewDirWide: low three-quarter (elevation ~17°) for aspect >= 1.4 —
+  //    sky, horizon and worm silhouette clearly visible above the battle.
+  //  - viewDirTall: steeper three-quarter (elevation ~35°) for aspect <=
+  //    0.55 — battlefield depth projects into screen height for portrait
+  //    fill, but stays far below overhead: horizon still in frame.
+  viewDirWide: [0.42, 0.30, 0.86],
+  // Tall elevation ~27°: steeper than wide (17°) so battlefield depth
+  // projects into portrait screen height, but shallow enough that the near
+  // Fremen posts clear the bottom edge once the horizon is pinned in the
+  // upper band (numerically: at elev >= ~30° the nearest post hangs below
+  // the frame bottom at every tested lift — verified in the fit simulator).
+  viewDirTall: [0.34, 0.42, 0.74],
   fov: 52,
-  margin: 1.02,
-  lookLift: 0.05,
+  // Fit margin, aspect-blended (framing.js fitFocus): slightly tight (<1) at
+  // landscape — the box fit is conservative there because the battlefield's
+  // far edge projects smaller than the centroid-plane estimate — but >=1 at
+  // portrait where the near-right Fremen post would otherwise graze the
+  // frame edge.
+  marginWide: 0.88,
+  marginTall: 1.04,
+  // Horizon-targeted aim (framing.js fitCamera): the camera's lookAt is
+  // lifted above the subject centroid by exactly the amount that puts the
+  // true horizon at this fraction of frame height from the top — horizon in
+  // the upper band, dead foreground cropped, at EVERY aspect. Blended:
+  // landscape sits the horizon a touch lower to crop its deeper foreground.
+  horizonFracWide: 0.38,
+  horizonFracTall: 0.30,
 };

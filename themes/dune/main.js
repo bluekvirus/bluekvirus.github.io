@@ -4,7 +4,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { COLORS } from './palette.js';
 import { FOCUS } from './layout.js';
-import { fitCamera } from './framing.js';
+import { fitFocus } from './framing.js';
 import { showFallback } from '../../js/router.js';
 import { createTerrain } from './terrain.js';
 import { createWorm } from './worm.js';
@@ -27,30 +27,33 @@ const state = {
   // core-derived frustum for free.
   camBase: new THREE.Vector3(),
   camLookAt: new THREE.Vector3(),
-  // R/1000 from the fitted bounding sphere — drift/parallax amplitudes in
-  // tick() are multiplied by this so they stay proportional to the subject
-  // size/framing instead of a fixed absolute magnitude.
+  // wr/1000 from the fitted camera-space box (wr = the binding horizontal
+  // half-extent) — drift/parallax amplitudes in tick() are multiplied by
+  // this so they stay proportional to the subject size/framing instead of a
+  // fixed absolute magnitude.
   driftScale: 1,
   pointer: { x: 0, y: 0, tx: 0, ty: 0 },
   updaters: [],
   fps: { frames: 0, t: 0, lowSeconds: 0, degraded: 0 }, // degraded: stage counter 0|1|2
 };
 
-// Bounding-sphere subject-fit framing (Task 1, v4): fov is fixed
-// (FOCUS.fov); fitCamera() computes the camera position/look-at so
-// FOCUS.core fills the frame identically at any aspect. Applies the result
-// to the live camera + state.camBase/camLookAt/driftScale. Called at mount
-// and on every resize/orientation-change so framing stays live-responsive
-// — never in tick(), so this is zero per-frame cost.
+// Camera-space box-fit framing (Task 1, v4 amended): fov is fixed
+// (FOCUS.fov); fitFocus() picks the aspect-appropriate focus tiers and view
+// direction (viewDirWide at landscape, viewDirTall at portrait, smoothstep
+// between — horizon visible at every aspect), box-fits them, and pins the
+// horizon in the upper band of the frame. Applies the result to the live
+// camera + state.camBase/camLookAt/driftScale. Called at mount and on every
+// resize/orientation-change so framing stays live-responsive — never in
+// tick(), so this is zero per-frame cost.
 function applyFraming(w, h) {
   const aspect = w / h;
-  const fit = fitCamera(FOCUS.core, aspect, FOCUS);
+  const fit = fitFocus(FOCUS, aspect);
   state.camera.aspect = aspect;
   state.camera.fov = FOCUS.fov;
   state.camera.updateProjectionMatrix();
   state.camBase.set(fit.position[0], fit.position[1], fit.position[2]);
   state.camLookAt.set(fit.lookAt[0], fit.lookAt[1], fit.lookAt[2]);
-  state.driftScale = fit.R / 1000;
+  state.driftScale = fit.wr / 1000;
 }
 
 export async function mount(container) {
