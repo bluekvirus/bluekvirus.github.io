@@ -6,7 +6,6 @@ export const COLORS = {
   horizon: 0xc2452e,
   starWhite: 0xffffff,
   amber: 0xffb347,
-  wormHide: 0x3b2a52,
   wormHideDark: 0x3a2e28,
   wormHideLit: 0x6b5344,
   wormMaw: 0x1a0f0d,

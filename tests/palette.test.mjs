@@ -31,8 +31,9 @@ test('sigil layer is fully removed from the palette', () => {
   assert.equal(COLORS.emperorGold, undefined);
 });
 
-test('wormHide is retained until the Task 2 worm rebuild removes it', () => {
-  assert.equal(COLORS.wormHide, 0x3b2a52);
+test('wormHide (v2 purple) is removed by the Task 2 worm rebuild', () => {
+  assert.equal('wormHide' in COLORS, false);
+  assert.equal(COLORS.wormHide, undefined);
 });
 
 // De-neon pass (v3): the cyber-neon mix-in is gone. Light may only come from
