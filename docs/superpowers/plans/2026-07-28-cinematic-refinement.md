@@ -52,13 +52,31 @@ New for v3: **zero cyan/magenta pixels**; **no emissive on the worm**; worm ≤2
 
 ---
 
-### Task 3: Whole-scene QA + README
+### Task 3: Responsive screen support
+
+**Files:** Modify `themes/dune/main.js` (responsive camera framing), `css/main.css` (HUD breakpoints), `themes/dune/layout.js` only if a portrait cam target constant is needed.
+
+**Requirement (user):** the page must present well across screen shapes — desktop wide, laptop, tablet, and phone portrait/landscape — not merely survive resize.
+
+**Build requirements:**
+- **Aspect-aware framing:** at wide aspect (≥ ~1.4) keep the current framing. As aspect narrows toward portrait, the fixed fov 58 + camTarget crops the battle badly — compensate responsively in `onResize` (and initial mount): widen fov (up to ~72) and/or pull the camera back along its look direction as a smooth function of aspect so the harvester + firefight + worm horizon all remain in frame at 390×844 portrait. Deterministic pure function of aspect (e.g., lerp between two calibrated setups); no per-frame work beyond what exists.
+- **Orientation change:** rotating a phone (resize event with swapped dimensions) must re-frame correctly without reload; `state.small` (pixel ratio / bloom-res / particle counts) is set once at mount — that's acceptable (document it), but framing must be live-responsive.
+- **HUD breakpoints:** current single ≤600px query is crude. Ensure: no overlap of name/nav/copyright at 320px-wide portrait; nav wraps cleanly with tap-friendly spacing (≥44px touch targets — resolves a parked v1 note); copyright may drop to a second line or hide at very narrow widths; name scales down.
+- **Fallback page** remains readable at all widths (it's simple flow content — verify, fix only if broken).
+
+- [ ] **Step 1:** Implement aspect-aware framing + HUD breakpoints.
+- [ ] **Step 2:** Visual iteration (≤5 rounds) at these viewports: 1920×1080, 1280×800, 1024×768, 768×1024, 390×844, 320×568 (Playwright browser_resize). **Criteria per viewport:** (a) harvester + battle zone + worm horizon in frame; (b) HUD legible, nothing overlapping, nav tappable on touch sizes; (c) no distortion/stretching artifacts; (d) landscape↔portrait resize re-frames live without reload.
+- [ ] **Step 3:** Bare `node --test` (12); commit `feat: responsive framing and HUD across screen shapes`.
+
+---
+
+### Task 4: Whole-scene QA + README
 
 **Files:** Modify `README.md`; tuning knobs from any module if the composed judgment demands.
 
 - [ ] **Step 1:** Whole-scene judgment at 3+ cycle moments (cruise, breach apex w/ maw, explosion mid-burst): v3 acceptance 1-5 (zero cyan/magenta; only diegetic halos; continuous worm; gaping maw at breach; warm HUD) plus v2's 7 criteria still holding. Tune minimally as needed.
-- [ ] **Step 2:** Full sweep: bare `node --test` (12); `/`, `/?theme=zzz`, `/?nogl=1`, resize, 390×844, reduced-motion (still frame, no new FX), forceDegrade stages 1-2 render clean; perf via direct render recorded.
-- [ ] **Step 3:** README: adjust styling description (cinematic dusk, no neon), worm description (film-style Shai-Hulud). Commit `chore: cinematic refinement QA and README`.
+- [ ] **Step 2:** Full sweep: bare `node --test` (12); `/`, `/?theme=zzz`, `/?nogl=1`, resize, 390×844 AND 320×568 portrait (responsive framing holds), reduced-motion (still frame, no new FX), forceDegrade stages 1-2 render clean; perf via direct render recorded.
+- [ ] **Step 3:** README: adjust styling description (cinematic dusk, no neon), worm description (film-style Shai-Hulud), note responsive framing. Commit `chore: cinematic refinement QA and README`.
 
 ---
 
