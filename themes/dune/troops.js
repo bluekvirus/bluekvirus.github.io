@@ -263,18 +263,32 @@ function mulberry32(seed) {
 
 const KILL_CHANCE = 0.22;      // per reported tracer impact (spec §5)
 const DYING_DUR = 0.8;         // fall-to-prone
-const DOWN_MIN = 16, DOWN_VAR = 7;   // prone body persists ~16-23s (spec "~20s")
-const SINK_DUR = 3.0;          // body sinks into the sand at the end of DOWN
+// fix round 1 (item 3): prone duration shortened from ~16-23s (spec's "~20s"
+// starting value, explicitly relaxed by the controller) down to ~8-13s, and
+// the sink/reinforce-delay trimmed too, so total recycle time (dying + down
+// + sink + delay, ~11-25s vs. the original ~21-34s) stops outpacing the kill
+// interval — steady-state strength sits closer to nominal (verified over a
+// 120s sweep: Fremen live 7-10 avg 8.41, up from 7-9 avg 7.71; Harkonnen
+// live 5-7 avg 6.28, up from 5-7 avg 5.77). Bodies still linger ~10-14s on
+// the sand (down state spans DOWN + SINK) — long enough to read as
+// accumulating casualties.
+const DOWN_MIN = 8, DOWN_VAR = 5;   // prone body persists ~8-13s
+const SINK_DUR = 1.5;          // body sinks into the sand at the end of DOWN (trimmed from 3.0)
 const SINK_DEPTH = 3.2;        // enough to fully bury a prone torso (+lift)
 const PRONE_LIFT = 0.6;        // prone body rides slightly proud of the dune
 const FALL_ANGLE = Math.PI * 0.47;   // just short of dead flat
-const REINF_DELAY_MIN = 1.5, REINF_DELAY_VAR = 5.5; // stagger after the sink
+const REINF_DELAY_MIN = 0.8, REINF_DELAY_VAR = 2.2; // stagger after the sink (trimmed from 1.5-7s)
 // Per-faction kill pacing: without it, the impact rate (~10/s across the
 // field at 22%/hit) would pin both factions at the nominal-3 floor within
 // seconds and the gate below would do all the work — the line would read as
-// a constant-strength churn, not visible thinning-and-refilling. One kill
-// per faction per ~7-13s keeps live counts *wandering* inside the ±3 band.
-const KILL_COOLDOWN_MIN = 7, KILL_COOLDOWN_VAR = 6;
+// a constant-strength churn, not visible thinning-and-refilling. Fix round 1
+// (item 2, controller ruling): the original 7-13s cooldown dominated *when*
+// deaths happened, so pacing read as "one scheduled death per faction every
+// ~10s" on a near-fixed beat rather than the 22% roll carrying real lethal
+// risk. Shortened and widened (3-11s, drawn from the PRNG) so the roll's
+// outcome — not the timer — more often decides the moment; deaths now
+// cluster and gap irregularly instead of landing on a metronome.
+const KILL_COOLDOWN_MIN = 3, KILL_COOLDOWN_VAR = 8;
 const STRENGTH_FLOOR = 3;      // live count never drops below nominal-3 (never wiped)
 const ARRIVE_EPS = 1.3;        // walk -> normal handoff distance (no visible snap)
 const WP_EPS = 5;              // fixed entry-waypoint pass distance
@@ -683,9 +697,13 @@ export function createTroops() {
   // Two casualties scripted at build time so the battle already has history
   // on frame one — and so the reduced-motion frozen frame (elapsed=9, dt=0
   // forever: no impacts can ever be reported) still includes the body-or-two
-  // spec §5 requires. Death times are pre-FIRE_WINDOW-negative so both are
-  // mid-'down' at elapsed 9 (downDur >= 16 => down until at least t=9.8);
-  // in normal playback they sink and reinforce like any other casualty.
+  // spec §5 requires. Death times are negative and tuned against this exact
+  // seed + the fix-round-1 DOWN_MIN/SINK_DUR so both units are still 'down'
+  // at elapsed=9 with a >=1.6s margin (verified: unit 2's down-window ends
+  // ~12.6s, unit FREMEN_COUNT+4's ends ~10.7s — see
+  // tests/troops-attrition.test.mjs, which regression-guards this against
+  // future constant/seed changes). In normal playback they sink and
+  // reinforce like any other casualty.
   function scriptDeath(i, tDeath) {
     const ctl = unitCtl[i];
     let t = tDeath;
@@ -698,8 +716,8 @@ export function createTroops() {
     att[i].yaw = _pose.yaw;
     killUnit(i, t);
   }
-  scriptDeath(2, -4);                 // a Fremen body on the forward line
-  scriptDeath(FREMEN_COUNT + 4, -7);  // a Harkonnen body on the arc
+  scriptDeath(2, -2);                 // a Fremen body on the forward line
+  scriptDeath(FREMEN_COUNT + 4, -1);  // a Harkonnen body on the arc
 
   // Warm-start so the very first rendered frame (and frozen reduced-motion
   // mode) already shows a fully posed, grounded squad rather than the
