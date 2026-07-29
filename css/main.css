@@ -16,14 +16,20 @@ body.fallback { overflow: auto; }
   font-size: 20px; letter-spacing: 0.4em; color: #ffb347;
   text-shadow: 0 0 10px rgba(255,179,71,.55);
 }
-#hud-nav { position: absolute; bottom: 24px; left: 28px; display: flex; gap: 18px; }
+#hud-nav { position: absolute; bottom: 24px; left: 28px; display: flex; flex-wrap: wrap; gap: 18px; max-width: calc(100vw - 56px); }
 #hud-nav a {
   color: #e8d5b5; text-decoration: none; font-size: 13px;
   letter-spacing: .15em; text-transform: uppercase;
   text-shadow: none;
+  /* ≥44px tap target on every viewport (resolves parked v1 note), independent
+     of the 13px visible text size. */
+  display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px;
 }
 #hud-nav a:hover { color: #ffb347; text-shadow: 0 0 8px rgba(255,179,71,.45); }
-#hud-copy { position: absolute; bottom: 24px; right: 28px; font-size: 11px; color: rgba(238,238,238,.5); }
+#hud-copy {
+  position: absolute; bottom: 24px; right: 28px; font-size: 11px;
+  color: rgba(238,238,238,.5); text-align: right; max-width: 45vw;
+}
 #fallback { display: none; padding: 64px 32px; max-width: 640px; margin: 0 auto; }
 #fallback.visible { display: block; }
 #fallback h1 { color: #ffb347; margin-bottom: 12px; }
@@ -32,8 +38,31 @@ body.fallback { overflow: auto; }
 #fallback a { color: #e8d5b5; }
 #fallback a:hover { color: #ffb347; }
 
+/* Tablet portrait / small laptop: tighten HUD margins, nav may start wrapping
+   once tap targets + gap exceed the row width. */
+@media (max-width: 900px) {
+  #hud-name { top: 20px; left: 20px; }
+  #hud-nav { left: 20px; bottom: 20px; gap: 10px 16px; }
+  #hud-copy { right: 20px; bottom: 20px; }
+}
+
+/* Phone portrait/landscape: name scales down; nav wraps into ≥44px-tall rows;
+   copyright drops below the nav row (never floats over it) instead of
+   sharing the bottom-right corner, since a wrapped nav can grow tall enough
+   to reach that corner. */
 @media (max-width: 600px) {
-  #hud-name { font-size: 16px; top: 18px; left: 18px; }
-  #hud-nav { left: 18px; bottom: 18px; gap: 12px; flex-wrap: wrap; }
-  #hud-copy { right: 18px; bottom: 56px; }
+  #hud-name { font-size: 16px; top: 16px; left: 16px; letter-spacing: 0.3em; }
+  #hud-nav { left: 16px; right: 16px; bottom: 16px; gap: 8px 14px; max-width: none; }
+  #hud-copy {
+    left: 16px; right: 16px; bottom: auto; top: 16px;
+    text-align: right; max-width: none; font-size: 10px;
+  }
+}
+
+/* Very narrow phones (≤360px, e.g. 320×568): shrink the name further and let
+   the copyright line wrap/hide rather than risk crowding the nav. */
+@media (max-width: 360px) {
+  #hud-name { font-size: 13px; letter-spacing: 0.2em; }
+  #hud-nav { gap: 6px 10px; }
+  #hud-copy { display: none; }
 }

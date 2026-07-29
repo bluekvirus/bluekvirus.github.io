@@ -15,19 +15,62 @@ import { createCombatFX } from './combatfx.js';
 const FROZEN_TIME = 9; // elapsed seconds shown when prefers-reduced-motion
 const CAM_BASE = new THREE.Vector3(...LAYOUT.camBase);
 const CAM_TARGET = new THREE.Vector3(...LAYOUT.camTarget);
+// Camera offset (target -> base) at the calibrated wide framing. Scaling this
+// vector and re-adding it to CAM_TARGET pulls the camera back along its
+// existing look direction without changing where it looks.
+const CAM_OFFSET = CAM_BASE.clone().sub(CAM_TARGET);
 
 const state = {
   renderer: null, scene: null, camera: null, composer: null, clock: null,
   rafId: 0, useComposer: true, reduced: false, small: false,
+  // Aspect-aware camera base the per-frame drift/parallax oscillates around
+  // (see tick()). Recomputed in applyFraming() on mount and on every resize
+  // (incl. orientation change) — never touched per frame.
+  camBase: new THREE.Vector3(),
   pointer: { x: 0, y: 0, tx: 0, ty: 0 },
   updaters: [],
   fps: { frames: 0, t: 0, lowSeconds: 0, degraded: 0 }, // degraded: stage counter 0|1|2
 };
 
+// Pure, deterministic function of aspect only: at wideAspect+ returns the
+// calibrated wide fov/base unchanged; as aspect narrows toward narrowAspect
+// it lerps fov up and scales the base outward along CAM_OFFSET (pull-back).
+// Called on mount and in onResize, never in tick() — zero per-frame cost.
+function computeFraming(aspect) {
+  const { wideAspect, narrowAspect, fovWide, fovNarrow, pullbackNarrow } = LAYOUT.camFrame;
+  const t = Math.min(1, Math.max(0, (wideAspect - aspect) / (wideAspect - narrowAspect)));
+  const fov = fovWide + (fovNarrow - fovWide) * t;
+  const scale = 1 + (pullbackNarrow - 1) * t;
+  return {
+    fov,
+    base: new THREE.Vector3(
+      CAM_TARGET.x + CAM_OFFSET.x * scale,
+      CAM_TARGET.y + CAM_OFFSET.y * scale,
+      CAM_TARGET.z + CAM_OFFSET.z * scale,
+    ),
+  };
+}
+
+// Applies computeFraming() to the live camera + state.camBase. Used at mount
+// and on every resize/orientation-change so framing stays live-responsive.
+function applyFraming(w, h) {
+  const aspect = w / h;
+  const { fov, base } = computeFraming(aspect);
+  state.camera.aspect = aspect;
+  state.camera.fov = fov;
+  state.camera.updateProjectionMatrix();
+  state.camBase.copy(base);
+}
+
 export async function mount(container) {
   if (!supportsWebGL()) throw new Error('WebGL unavailable');
 
   state.reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Mount-time only: pixel ratio, bloom resolution and particle counts below
+  // are sized once from the viewport at load and do not react to later
+  // resize/orientation-change (that would mean re-provisioning GPU resources
+  // on every rotate). Framing (fov/camera base), by contrast, IS live via
+  // applyFraming()/onResize() below — that's the responsive requirement.
   state.small = Math.min(window.innerWidth, window.innerHeight) < 700;
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -46,8 +89,10 @@ export async function mount(container) {
   const scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(COLORS.horizon, 0.00035);
 
-  const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 8000);
-  camera.position.copy(CAM_BASE);
+  const initFraming = computeFraming(window.innerWidth / window.innerHeight);
+  const camera = new THREE.PerspectiveCamera(initFraming.fov, window.innerWidth / window.innerHeight, 0.1, 8000);
+  state.camBase.copy(initFraming.base);
+  camera.position.copy(state.camBase);
 
   scene.add(buildSky(), buildStars(), ...buildMoons());
 
@@ -174,8 +219,7 @@ function buildMoons() {
 
 function onResize() {
   const w = window.innerWidth, h = window.innerHeight;
-  state.camera.aspect = w / h;
-  state.camera.updateProjectionMatrix();
+  applyFraming(w, h); // re-frame live, incl. orientation change (swapped w/h)
   state.renderer.setSize(w, h);
   state.composer.setSize(w, h);
 }
@@ -205,9 +249,9 @@ function tick() {
   state.pointer.x += (state.pointer.tx - state.pointer.x) * 0.05;
   state.pointer.y += (state.pointer.ty - state.pointer.y) * 0.05;
   state.camera.position.set(
-    CAM_BASE.x + 12 * Math.sin(elapsed * 0.05) + state.pointer.x * 6,
-    CAM_BASE.y + 4 * Math.sin(elapsed * 0.083) - state.pointer.y * 4,
-    CAM_BASE.z + 8 * Math.cos(elapsed * 0.04),
+    state.camBase.x + 12 * Math.sin(elapsed * 0.05) + state.pointer.x * 6,
+    state.camBase.y + 4 * Math.sin(elapsed * 0.083) - state.pointer.y * 4,
+    state.camBase.z + 8 * Math.cos(elapsed * 0.04),
   );
   state.camera.lookAt(CAM_TARGET);
 
