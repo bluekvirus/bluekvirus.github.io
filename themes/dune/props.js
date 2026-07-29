@@ -14,7 +14,9 @@ export function createProps({ small = false } = {}) {
   const pointsList = [];
   const denseCount = small ? 260 : 550;
   const farCount = small ? 120 : 250;
-  const amber = new THREE.Color(COLORS.amber), cyan = new THREE.Color(COLORS.neonCyan);
+  // All-amber glitter — warm variation only (no cyan fraction; diegetic
+  // light only). A touch of dustTan gives the field some tonal range.
+  const amber = new THREE.Color(COLORS.amber), amberWarm = new THREE.Color(COLORS.dustTan);
 
   for (const bed of BEDS) {
     const count = bed.dense ? denseCount : farCount;
@@ -26,7 +28,7 @@ export function createProps({ small = false } = {}) {
       // Hug the ground (0.3–1.5 units up): spice is glitter ON the sand, not a
       // floating cloud — the old 2–7 unit band read as a volumetric fireball.
       pos.set([x, duneHeight(x, z) + 0.3 + Math.random() * 1.2, z], i * 3);
-      const c = Math.random() < 0.8 ? amber : cyan;
+      const c = Math.random() < 0.8 ? amber : amberWarm;
       col.set([c.r, c.g, c.b], i * 3);
     }
     const geo = new THREE.BufferGeometry();

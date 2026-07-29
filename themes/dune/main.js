@@ -93,7 +93,10 @@ export async function mount(container) {
   composer.addPass(new RenderPass(scene, camera));
   const bloomRes = new THREE.Vector2(window.innerWidth, window.innerHeight)
     .multiplyScalar(state.small ? 0.5 : 1);
-  composer.addPass(new UnrealBloomPass(bloomRes, 0.7, 0.55, 0.75));
+  // De-neon: bloom is the fire/heat device only — strength/threshold tuned
+  // so just genuinely bright diegetic emissives (muzzle flashes, explosions,
+  // engine glow, running lights) halo, nothing else.
+  composer.addPass(new UnrealBloomPass(bloomRes, 0.5, 0.55, 0.85));
 
   Object.assign(state, { renderer, scene, camera, composer, clock: new THREE.Clock() });
 
@@ -235,7 +238,7 @@ function watchFps(dt) {
 }
 
 function applyDegradeStage1() {
-  state.useComposer = false; // bloom off; emissives still read as neon, just without halo
+  state.useComposer = false; // bloom off; emissives (fire/flashes/engine glow) still read, just without halo
 }
 
 function applyDegradeStage2() {

@@ -265,16 +265,19 @@ export function createTroops() {
   fremenBody.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   harkBody.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 
-  // Shared tiny accent geometry (eye-glow / visor-glow): thin along local
+  // Shared tiny accent geometry (hood face patch / visor): thin along local
   // +X (forward) so it clears the head/helmet's front face instead of being
   // buried inside it, wide along Z for a visor-band/eye-slit read.
   // One InstancedMesh per faction so the whole squad set stays at 4 draw calls.
+  // De-neon: no light may come from a trooper's face. Fremen stealth reads as
+  // a plain non-emissive dark hood patch; Harkonnen keep a visor accent but
+  // dimmed to a faint equipment-light glow rather than a neon glow.
   const accentGeo = box(0.16, 0.12, 0.4);
   const fremenAccentMat = new THREE.MeshStandardMaterial({
-    color: COLORS.fremenEyes, emissive: COLORS.fremenEyes, emissiveIntensity: 1.6,
+    color: COLORS.hullDark, roughness: 0.9,
   });
   const harkAccentMat = new THREE.MeshStandardMaterial({
-    color: COLORS.visorRed, emissive: COLORS.visorRed, emissiveIntensity: 1.8,
+    color: COLORS.visorRed, emissive: COLORS.visorRed, emissiveIntensity: 0.35,
   });
   const fremenAccent = new THREE.InstancedMesh(accentGeo, fremenAccentMat, FREMEN_COUNT);
   const harkAccent = new THREE.InstancedMesh(accentGeo, harkAccentMat, HARK_COUNT);

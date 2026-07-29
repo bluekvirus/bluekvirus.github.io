@@ -129,9 +129,12 @@ export function createWorm() {
     new THREE.MeshStandardMaterial({ color: COLORS.wormHide, flatShading: true, roughness: 0.9 }),
     SEG_COUNT,
   );
+  // Segment ridges: a dark, non-emissive tone (de-neon — the full rebuild
+  // into a plated hide happens in Task 2; this keeps the ring read without
+  // any glow).
   const rings = new THREE.InstancedMesh(
     new THREE.TorusGeometry(1, 0.06, 6, 14),
-    new THREE.MeshBasicMaterial({ color: COLORS.neonCyan, transparent: true, opacity: 0.55 }),
+    new THREE.MeshBasicMaterial({ color: COLORS.wormHideDark, transparent: true, opacity: 0.55 }),
     SEG_COUNT,
   );
   body.instanceMatrix.setUsage(THREE.DynamicDrawUsage);

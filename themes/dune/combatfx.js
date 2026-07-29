@@ -451,7 +451,7 @@ export function createCombatFX(units) {
     const sx = unit.pos.x, sy = unit.pos.y + unit.muzzleY, sz = unit.pos.z;
     const tx = target.pos.x + dx, tz = target.pos.z + dz;
     const ty = target.pos.y + target.muzzleY;
-    const color = unit.faction === 'fremen' ? COLORS.tracerCyan : COLORS.harkRed;
+    const color = unit.faction === 'fremen' ? COLORS.tracerFremen : COLORS.harkRed;
 
     tracers.spawn(sx, sy, sz, tx, ty, tz, elapsed, color);
     flashes.spawn(sx, sy, sz, elapsed);

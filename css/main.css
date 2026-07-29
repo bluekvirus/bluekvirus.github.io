@@ -14,22 +14,23 @@ body.fallback { overflow: auto; }
 #hud-name {
   position: absolute; top: 24px; left: 28px;
   font-size: 20px; letter-spacing: 0.4em; color: #ffb347;
-  text-shadow: 0 0 8px rgba(255,46,136,.8), 0 0 24px rgba(0,229,255,.5);
+  text-shadow: 0 0 10px rgba(255,179,71,.55);
 }
 #hud-nav { position: absolute; bottom: 24px; left: 28px; display: flex; gap: 18px; }
 #hud-nav a {
-  color: #00e5ff; text-decoration: none; font-size: 13px;
+  color: #e8d5b5; text-decoration: none; font-size: 13px;
   letter-spacing: .15em; text-transform: uppercase;
-  text-shadow: 0 0 6px rgba(0,229,255,.7);
+  text-shadow: none;
 }
-#hud-nav a:hover { color: #ff2e88; text-shadow: 0 0 8px rgba(255,46,136,.9); }
+#hud-nav a:hover { color: #ffb347; text-shadow: 0 0 8px rgba(255,179,71,.45); }
 #hud-copy { position: absolute; bottom: 24px; right: 28px; font-size: 11px; color: rgba(238,238,238,.5); }
 #fallback { display: none; padding: 64px 32px; max-width: 640px; margin: 0 auto; }
 #fallback.visible { display: block; }
 #fallback h1 { color: #ffb347; margin-bottom: 12px; }
 #fallback ul { list-style: none; margin: 16px 0; }
 #fallback li { margin: 8px 0; }
-#fallback a { color: #00e5ff; }
+#fallback a { color: #e8d5b5; }
+#fallback a:hover { color: #ffb347; }
 
 @media (max-width: 600px) {
   #hud-name { font-size: 16px; top: 18px; left: 18px; }
