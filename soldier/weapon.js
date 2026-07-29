@@ -13,7 +13,6 @@
 // the head, which is exactly what earlier attempts did.
 
 const HOLSTER_BONE = 'UpperLeg.R';
-const DEG = Math.PI / 180;
 
 // Clips during which the weapon belongs in the hand. Everything else holsters.
 export const GUN_CLIPS = new Set([
@@ -25,26 +24,120 @@ export const GUN_CLIPS = new Set([
   'Reload',
 ]);
 
-// Pistol on the outer face of the right thigh, muzzle down, slight forward
-// cant. The position was solved rather than guessed: perturb each local axis,
-// measure the resulting world movement to build the local→world Jacobian, then
-// solve it for the wanted world point. An earlier value put the weapon half
-// inside the leg and overlapping the idle hand; the target here is the outer
-// thigh surface, low enough to clear the hand.
-const HOLSTER = { pos: [-0.1037, 0.1506, -0.1323], rot: [3.5, -174.3, 80.4] };
+// Where the holstered pistol should end up, expressed in WORLD terms relative
+// to the thigh bone (which sits at the hip): outboard past the leg surface,
+// down the thigh, slightly rearward. World units are readable; the bone-local
+// numbers that produce them are not, so they are derived below rather than
+// written here.
+const HOLSTER_OFFSET = new BABYLON.Vector3(0.114, -0.205, -0.053);
 
-function rigOnBone(scene, name, skeleton, boneName, carrier, t) {
+// The weapon's own axes, measured from its geometry: X is the barrel (0.252
+// long), Y is the flat of the slide (0.065 thick), Z runs grip-to-slide
+// (0.179). A holstered sidearm points the barrel down and lays the flat
+// against the leg, which is exactly the basis built in orientHolster().
+const BARREL_WORLD = new BABYLON.Vector3(0, -0.965, -0.262); // down, slight rearward cant
+const FLAT_WORLD = new BABYLON.Vector3(1, 0, 0); // outboard, so the slide lies on the thigh
+
+function rigOnBone(scene, name, skeleton, boneName, carrier) {
   const bone = skeleton.bones.find((b) => b.name === boneName);
   if (!bone) return null;
   const rig = new BABYLON.TransformNode(name, scene);
   rig.attachToBone(bone, carrier);
-  rig.position.fromArray(t.pos);
-  rig.rotationQuaternion = BABYLON.Quaternion.FromEulerAngles(
-    t.rot[0] * DEG,
-    t.rot[1] * DEG,
-    t.rot[2] * DEG,
-  );
+  rig.rotationQuaternion = BABYLON.Quaternion.Identity();
   return rig;
+}
+
+/**
+ * Point the weapon correctly, then slide it onto the thigh.
+ *
+ * Both steps are computed at setup rather than hardcoded. The glTF importer
+ * leaves the bone bases scaled and mirrored, so values authored by hand in
+ * that space are meaningless — successive guesses put this pistol at knee
+ * height, in the chest, above the head, and half-sunk into the leg. Deriving
+ * from the bone's actual transform is the only reliable route.
+ */
+function seatOnThigh(rig, bone, carrier, meshes) {
+  // 0. Cancel the mirror. This bone chain arrives with determinant −1 (scaling
+  //    y = −1). That matters for more than tidiness: `decompose()` cannot
+  //    return a valid rotation from a mirrored matrix, and no pure rotation can
+  //    map a mirrored frame onto an unmirrored basis at all — so the flip must
+  //    be undone before any orientation maths is meaningful. Cancelling it also
+  //    renders the pistol the right way round rather than as its mirror image.
+  rig.rotationQuaternion = BABYLON.Quaternion.Identity();
+  rig.scaling.setAll(1);
+  rig.computeWorldMatrix(true);
+  if (rig.getWorldMatrix().determinant() < 0) {
+    rig.scaling.set(1, -1, 1);
+    rig.computeWorldMatrix(true);
+  }
+
+  // 1. Orientation. With identity local rotation the rig carries whatever the
+  //    bone imposes; measure that, then cancel it out of the wanted basis.
+  const boneRot = new BABYLON.Quaternion();
+  rig.getWorldMatrix().decompose(undefined, boneRot, undefined);
+
+  const x = BARREL_WORLD.clone().normalize();
+  const z = BABYLON.Vector3.Cross(x, FLAT_WORLD).normalize();
+  const y = BABYLON.Vector3.Cross(z, x).normalize();
+  const basis = new BABYLON.Matrix();
+  BABYLON.Matrix.FromXYZAxesToRef(x, y, z, basis);
+  const want = new BABYLON.Quaternion();
+  basis.decompose(undefined, want, undefined);
+  rig.rotationQuaternion = BABYLON.Quaternion.Inverse(boneRot).multiply(want);
+  rig.computeWorldMatrix(true);
+
+  // 2. Position. Convert the wanted world displacement into rig-local space by
+  //    undoing the bone's rotation and scale.
+  const centre = () => {
+    let mn = null;
+    let mx = null;
+    for (const m of meshes) {
+      m.computeWorldMatrix(true);
+      m.refreshBoundingInfo();
+      const b = m.getBoundingInfo().boundingBox;
+      mn = mn ? BABYLON.Vector3.Minimize(mn, b.minimumWorld) : b.minimumWorld.clone();
+      mx = mx ? BABYLON.Vector3.Maximize(mx, b.maximumWorld) : b.maximumWorld.clone();
+    }
+    return mn.add(mx).scale(0.5);
+  };
+
+  // 2. Position. Rather than trust `decompose()` to convert a world offset into
+  //    this bone's local space — it does not, on a chain the importer has
+  //    scaled and mirrored — measure the local→world map directly: nudge each
+  //    local axis, see where the weapon actually goes, and solve the resulting
+  //    3×3 for the displacement we want. One pass lands within a millimetre.
+  const target = bone.getAbsolutePosition(carrier).add(HOLSTER_OFFSET);
+  const base = rig.position.clone();
+  const p0 = centre();
+
+  const J = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]; // columns: response to +eps on x/y/z
+  const eps = 0.01;
+  const axes = ['x', 'y', 'z'];
+  for (let a = 0; a < 3; a++) {
+    rig.position.copyFrom(base);
+    rig.position[axes[a]] += eps;
+    rig.computeWorldMatrix(true);
+    const p = centre();
+    J[0][a] = (p.x - p0.x) / eps;
+    J[1][a] = (p.y - p0.y) / eps;
+    J[2][a] = (p.z - p0.z) / eps;
+  }
+  rig.position.copyFrom(base);
+
+  const det3 = (m) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+    - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+    + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+  const D = det3(J);
+  if (Math.abs(D) > 1e-9) {
+    const rhs = [target.x - p0.x, target.y - p0.y, target.z - p0.z];
+    const swap = (col) => J.map((row, i) => row.map((v, j) => (j === col ? rhs[i] : v)));
+    rig.position.set(
+      base.x + det3(swap(0)) / D,
+      base.y + det3(swap(1)) / D,
+      base.z + det3(swap(2)) / D,
+    );
+  }
+  rig.computeWorldMatrix(true);
 }
 
 /**
@@ -57,9 +150,10 @@ export function createWeapon(scene, loaded) {
   const held = loaded.meshes.filter((m) => m.name.startsWith('Pistol'));
   const carrier = loaded.meshes.find((m) => m.skeleton === skeleton) ?? held[0];
 
+  const bone = skeleton?.bones.find((b) => b.name === HOLSTER_BONE);
   const holstered = [];
   const rig = skeleton && carrier
-    ? rigOnBone(scene, 'holster', skeleton, HOLSTER_BONE, carrier, HOLSTER)
+    ? rigOnBone(scene, 'holster', skeleton, HOLSTER_BONE, carrier)
     : null;
 
   if (rig) {
@@ -82,6 +176,7 @@ export function createWeapon(scene, loaded) {
       copy.position.set(-c.x, -c.y, -c.z);
       holstered.push(copy);
     }
+    if (bone && holstered.length) seatOnThigh(rig, bone, carrier, holstered);
   }
 
   const api = {
