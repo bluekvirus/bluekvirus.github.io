@@ -23,22 +23,43 @@ Replace aspect-lerped fov with a **bounding-sphere fit**:
 - `layout.js` gains `FOCUS`: a **core** list of world points that MUST always be in
   frame (harvester hull extents, Harkonnen arc, Fremen engagement zone) and a
   **bonus** point (worm horizon apex) framed only when it fits for free.
-- On mount and every resize, compute the core points' bounding sphere (center `C`,
-  radius `R`), then place the camera along a fixed unit direction `VIEW_DIR` (a low,
-  three-quarter angle, from `layout.js`) at distance
-  `d = R / sin(min(vFovHalf, hFovHalf)) * MARGIN`, where
-  `hFovHalf = atan(tan(vFovHalf) * aspect)`. fov stays a constant 52°; **distance**
-  does the adapting, so the subject fills the frame identically at 21:9, 16:9, 4:3,
-  and 9:19.5. `MARGIN ≈ 1.12` (tunable).
-- Camera looks at `C` lifted slightly (`C.y + R*0.10`) so the horizon sits high and
-  dead foreground is cropped out.
-- Portrait behavior falls out of the same math (narrow `hFov` → larger `d`); no
-  special-casing, no separate calibration constants to drift.
-- Drift/parallax continue to oscillate around the computed base, amplitudes scaled
-  by `R/1000` so they stay proportional at every framing.
-- **Acceptance:** at 21:9, 16:9, 3:2, 4:3, 1:1, 3:4, 9:16 and 9:19.5 the harvester +
-  battle line fill ≥55% of frame height with no more than ~15% of frame height as
-  empty foreground sand, and nothing important is clipped.
+**Amended 2026-07-29 after the first implementation attempt.** The original text
+specified an isotropic bounding-*sphere* fit at fixed fov. That was proven (twice,
+independently) to cap vertical fill at `atan(tan(vHalf)·aspect)/vHalf` ≈ 48% at phone
+portrait — a property of the sphere abstraction, with no dependence on which points
+are chosen. Hitting a 55% bar under it required tilting the camera nearly overhead,
+producing a top-down "war table" with no sky or horizon at *every* aspect. The metric
+was satisfied; the shot was destroyed. Revised method below.
+
+- **Camera-space box fit, not a sphere.** Build an orthonormal basis from the view
+  direction (`right`, `up`, `forward`), project the focus points onto it, and take
+  half-extents `wr` (right), `wu` (up), `wd` (forward). Then
+  `distance = max(wr / tan(hHalfFov), wu / tan(vHalfFov)) * MARGIN + wd`.
+  This fits the subject's actual silhouette — a wide, shallow strip — instead of the
+  much larger sphere that encloses it.
+- **The view angle is itself responsive.** `layout.js` holds two directions:
+  `viewDirWide` (low three-quarter, horizon and sky visible) used at aspect ≥ 1.4,
+  and `viewDirTall` (steeper three-quarter, elevation ~35-45°) used at aspect ≤ 0.55,
+  smoothly interpolated between. A tall frame earns its fill from the battlefield's
+  *depth* projecting into screen height — not from cropping and not from going
+  overhead. **Hard constraint: the horizon must remain visible at every aspect**;
+  elevation never exceeds ~45°. The scene has a sky, a sun and a worm on the horizon —
+  a framing that hides them is wrong regardless of what it scores.
+- **Tiered focus.** `FOCUS.core` (harvester + Harkonnen line + near Fremen positions)
+  is always framed. `FOCUS.wide` (far Fremen positions) and `FOCUS.bonus` (worm breach
+  apex) are appended only while doing so does not push the core subject below its
+  target fill — so a phone shows a tighter slice of the same battle, which is what a
+  camera operator would do.
+- Camera looks at the core centroid lifted by `wu * lookLift` so the horizon sits in
+  the upper third and dead foreground is cropped out.
+- Drift/parallax oscillate around the computed base, amplitudes scaled by the fitted
+  extent so they stay proportional at every framing.
+- **Acceptance (composition, not a single number):** at 21:9, 16:9, 3:2, 4:3, 1:1,
+  3:4, 9:16 and 9:19.5 — (a) the harvester and the firing line are unmistakably the
+  subject, occupying a substantial share of the frame; (b) the horizon line is visible
+  and sits in the upper ~40% of the frame; (c) no empty foreground band deeper than
+  ~20% of frame height; (d) nothing in `FOCUS.core` is clipped; (e) the framing reads
+  as the *same shot* across aspects, tighter on narrow screens, not a different scene.
 
 ## 2. Harsh Arrakis noon
 
