@@ -100,3 +100,26 @@ test('hazeWash is added for the daylight heat-haze fog', () => {
 test('sunDisc is added for the sun billboard', () => {
   assert.equal(COLORS.sunDisc, 0xfffdf5);
 });
+
+// Task 3: film-accurate harvester hull tones. The machine is sand-colored —
+// deliberately color-matched to the desert — never Harkonnen black.
+test('hullSand (harvester khaki base) is added', () => {
+  assert.equal(COLORS.hullSand, 0xc7a876);
+});
+
+test('hullGrime (rust-brown streaking/panel grime) is added', () => {
+  assert.equal(COLORS.hullGrime, 0x7a5230);
+});
+
+test('hullBleach (sun-scoured highlight) is added', () => {
+  assert.equal(COLORS.hullBleach, 0xe8d9b0);
+});
+
+test('hullUnder (dark undercarriage/track shadow) is added', () => {
+  assert.equal(COLORS.hullUnder, 0x3a2e22);
+});
+
+test('hullDark and harkRed remain for troops and the escort ornithopter', () => {
+  assert.equal(COLORS.hullDark, 0x2b2430);
+  assert.equal(COLORS.harkRed, 0xd4353a);
+});

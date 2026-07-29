@@ -14,6 +14,12 @@ export const COLORS = {
   sunlight: 0xfff4e2,
   hullDark: 0x2b2430,
   harkRed: 0xd4353a,
+  // Task 3: the film harvester is sun-bleached sand/khaki, NOT Harkonnen
+  // black (hullDark/harkRed stay for the troops and the escort ornithopter).
+  hullSand: 0xc7a876,
+  hullGrime: 0x7a5230,
+  hullBleach: 0xe8d9b0,
+  hullUnder: 0x3a2e22,
   visorRed: 0xff3b30,
   stillsuitTan: 0xb59a6a,
   tracerFremen: 0xffd9a0,

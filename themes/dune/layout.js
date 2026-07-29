@@ -34,14 +34,16 @@ export const FOCUS = {
   // core — always framed: harvester hull extents, Harkonnen arc, and the
   // NEAR Fremen positions (x <= 150).
   core: [
-    // harvester hull extents (harvester {x:-40,z:-280,rotY:0.35} rotated) +
-    // top (mast)
-    [-15, 6, -289],   // nose / intake tip (fore)
-    [-64, 6, -271],   // rear hull (aft)
-    [-73, 36, -268],  // rear conveyor-arm apex (aft-top)
-    [-48, 6, -291],   // port track housing
-    [-39, 6, -266],   // starboard track housing
-    [-48, 38, -271],  // antenna mast top
+    // harvester hull extents (Task 3 film-accurate legged rebuild: 150 long
+    // x ~100 wide at the splayed feet x ~44 tall massing, slab riding at 21
+    // on six legs; local +X fore; harvester {x:-40,z:-280,rotY:0.35} rotated
+    // into world, ground y ~= 5.8 at the pad)
+    [31, 9, -306],    // nose / intake funnel mouth (fore, at the sand)
+    [-110, 44, -254], // stern block top (aft)
+    [-100, 62, -268], // exhaust stack tops (aft-top)
+    [-63, 8, -325],   // port mid-leg foot pad (outer edge)
+    [-28, 8, -231],   // starboard mid-leg foot pad (outer edge)
+    [-31, 63, -273],  // sensor mast head
     // Harkonnen arc end posts + center (harkArc: cx:-10,cz:-265,r:70)
     [51, 9, -299],
     [22, 12, -203],
