@@ -4,8 +4,16 @@
 // hand for every clip — the figure would otherwise punch, roll, wave and die
 // while still gripping it. This module keeps the skinned pistol for gun clips
 // and swaps in an unskinned copy riding the thigh for everything else.
+//
+// The holster rig is attached with `attachToBone`, so it tracks the skeleton
+// through every clip — walk swing, rolls, deaths — with no per-frame JS. The
+// importer leaves the bone bases scaled and mirrored, so the rig-local numbers
+// below were solved numerically against the rig rather than reasoned out;
+// hand-authored offsets in this space land the pistol in the chest or above
+// the head, which is exactly what earlier attempts did.
 
 const HOLSTER_BONE = 'UpperLeg.R';
+const DEG = Math.PI / 180;
 
 // Clips during which the weapon belongs in the hand. Everything else holsters.
 export const GUN_CLIPS = new Set([
@@ -17,12 +25,22 @@ export const GUN_CLIPS = new Set([
   'Reload',
 ]);
 
-// Offset from the thigh bone's origin (at the hip), in the figure's own space:
-// outboard to the right, down the thigh, a touch forward. Authored in world
-// units and applied directly — the bone's local basis is scaled and mirrored,
-// so offsets expressed there are unreadable and error-prone.
-const OFFSET = new BABYLON.Vector3(0.06, -0.18, 0.03);
-const TILT_Z = Math.PI * 0.07; // slight cant against the leg
+// Pistol flat against the outer right thigh, muzzle down, slight forward cant.
+const HOLSTER = { pos: [-0.0257, 0.0802, -0.0929], rot: [3.5, -174.3, 80.4] };
+
+function rigOnBone(scene, name, skeleton, boneName, carrier, t) {
+  const bone = skeleton.bones.find((b) => b.name === boneName);
+  if (!bone) return null;
+  const rig = new BABYLON.TransformNode(name, scene);
+  rig.attachToBone(bone, carrier);
+  rig.position.fromArray(t.pos);
+  rig.rotationQuaternion = BABYLON.Quaternion.FromEulerAngles(
+    t.rot[0] * DEG,
+    t.rot[1] * DEG,
+    t.rot[2] * DEG,
+  );
+  return rig;
+}
 
 /**
  * @param {BABYLON.Scene} scene
@@ -30,18 +48,16 @@ const TILT_Z = Math.PI * 0.07; // slight cant against the leg
  * @returns {{ setDrawn(boolean): void, drawn: boolean, allMeshes: BABYLON.AbstractMesh[] }}
  */
 export function createWeapon(scene, loaded) {
-  const held = loaded.meshes.filter((m) => m.name.startsWith('Pistol'));
   const skeleton = loaded.skeletons[0];
-  const bone = skeleton?.bones.find((b) => b.name === HOLSTER_BONE);
+  const held = loaded.meshes.filter((m) => m.name.startsWith('Pistol'));
   const carrier = loaded.meshes.find((m) => m.skeleton === skeleton) ?? held[0];
 
   const holstered = [];
-  let rig = null;
+  const rig = skeleton && carrier
+    ? rigOnBone(scene, 'holster', skeleton, HOLSTER_BONE, carrier, HOLSTER)
+    : null;
 
-  if (bone && carrier && held.length) {
-    rig = new BABYLON.TransformNode('holster', scene);
-    rig.rotation.z = TILT_Z;
-
+  if (rig) {
     for (const src of held) {
       const copy = src.clone(`${src.name}_holstered`, rig);
       if (!copy) continue;
@@ -61,26 +77,6 @@ export function createWeapon(scene, loaded) {
       copy.position.set(-c.x, -c.y, -c.z);
       holstered.push(copy);
     }
-
-    // Follow the thigh bone each frame. Scratch vectors are module-free and
-    // reused, so this allocates nothing per frame.
-    const bonePos = new BABYLON.Vector3();
-    const worldOffset = new BABYLON.Vector3();
-    const rot = new BABYLON.Quaternion();
-
-    scene.onBeforeRenderObservable.add(() => {
-      if (!rig.isEnabled() || !holstered.length || !holstered[0].isEnabled()) return;
-      bone.getAbsolutePositionToRef(carrier, bonePos);
-      // Rotate the offset by the figure's own orientation so the holster stays
-      // on his right when he turns (matters once figures move on a map).
-      const m = carrier.getWorldMatrix();
-      m.decompose(undefined, rot, undefined);
-      worldOffset.copyFrom(OFFSET);
-      worldOffset.rotateByQuaternionToRef(rot, worldOffset);
-      rig.position.copyFrom(bonePos).addInPlace(worldOffset);
-      rig.rotationQuaternion = null;
-      rig.rotation.set(0, 0, TILT_Z);
-    });
   }
 
   const api = {
