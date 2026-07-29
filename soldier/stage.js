@@ -1,39 +1,57 @@
 // The display stage: camera rig, studio lighting, miniature base, backdrop.
 // Owns everything around the figures; knows nothing about how a figure is built.
 
+// Plinth colours live here rather than in a palette module: the stage owns its
+// own dressing, and the figure now brings its own materials from the glTF.
+const BASE_TOP = '#43474d';
+const BASE_RIM = '#33363b';
+
+function plinthMaterials(scene) {
+  const mk = (name, hex) => {
+    const m = new BABYLON.StandardMaterial(name, scene);
+    m.diffuseColor = BABYLON.Color3.FromHexString(hex);
+    m.specularColor = new BABYLON.Color3(0, 0, 0);
+    m.freeze();
+    return m;
+  };
+  return { top: mk('matBaseTop', BASE_TOP), rim: mk('matBaseRim', BASE_RIM) };
+}
+
 /** Round plinth for a single figure, like a tabletop miniature's base. */
-function createRoundBase(scene, mats) {
+function createRoundBase(scene) {
+  const m = plinthMaterials(scene);
   const top = BABYLON.MeshBuilder.CreateCylinder('baseTop', {
     diameter: 1.5, height: 0.06, tessellation: 24,
   }, scene);
   top.position.y = 0.03;
-  top.material = mats.baseTop;
+  top.material = m.top;
   top.receiveShadows = true;
 
   const rim = BABYLON.MeshBuilder.CreateCylinder('baseRim', {
     diameterTop: 1.62, diameterBottom: 1.7, height: 0.05, tessellation: 24,
   }, scene);
   rim.position.y = 0.005;
-  rim.material = mats.baseRim;
+  rim.material = m.rim;
   rim.receiveShadows = true;
 
   return [top, rim];
 }
 
-/** Long plinth for the roster lineup. */
-function createLineupBase(scene, mats, width) {
+/** Long plinth, for showing several figures side by side. */
+function createLineupBase(scene, width) {
+  const m = plinthMaterials(scene);
   const top = BABYLON.MeshBuilder.CreateBox('baseTop', {
     width, height: 0.06, depth: 1.7,
   }, scene);
   top.position.y = 0.03;
-  top.material = mats.baseTop;
+  top.material = m.top;
   top.receiveShadows = true;
 
   const rim = BABYLON.MeshBuilder.CreateBox('baseRim', {
     width: width + 0.2, height: 0.05, depth: 1.95,
   }, scene);
   rim.position.y = 0.005;
-  rim.material = mats.baseRim;
+  rim.material = m.rim;
   rim.receiveShadows = true;
 
   return [top, rim];
@@ -43,7 +61,7 @@ function createLineupBase(scene, mats, width) {
  * @param {object} opts.lineup - when set { width }, frame a whole roster on a
  *   long plinth instead of one figure on a round base.
  */
-export function createStage({ scene, engine, canvas, mats, lineup = null }) {
+export function createStage({ scene, engine, canvas, lineup = null }) {
   scene.clearColor = BABYLON.Color4.FromHexString('#20242bff');
 
   // ---- camera: turntable with drag-orbit and scroll-zoom ----------------
@@ -87,8 +105,8 @@ export function createStage({ scene, engine, canvas, mats, lineup = null }) {
   shadows.darkness = 0.42;
 
   const base = lineup
-    ? createLineupBase(scene, mats, lineup.width)
-    : createRoundBase(scene, mats);
+    ? createLineupBase(scene, lineup.width)
+    : createRoundBase(scene);
 
   return { camera, key, fill, rim, shadows, base };
 }

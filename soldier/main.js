@@ -1,88 +1,99 @@
-import { createMaterials } from './palette.js';
-import { createStage, standOnBase, attachTurntable } from './stage.js';
-import { createSoldier, CATEGORIES } from './soldier.js';
-import { LOADOUTS, ROSTER } from './loadouts.js';
+import { createStage, attachTurntable, standOnBase } from './stage.js';
+
+const MODEL = { dir: './assets/quaternius/', file: 'Swat.gltf' };
+
+// The roadmap's stages map onto the pack's animation set. This order is the
+// order the picker lists them in; anything in the file not named here is
+// appended afterwards so nothing is hidden.
+const STAGES = [
+  { label: 'Idle', clip: 'Idle' },
+  { label: 'Hold gun', clip: 'Idle_Gun' },
+  { label: 'Aim', clip: 'Idle_Gun_Pointing' },
+  { label: 'Walk', clip: 'Walk' },
+  { label: 'Run', clip: 'Run' },
+  { label: 'Run + fire', clip: 'Run_Shoot' },
+  { label: 'Shoot', clip: 'Gun_Shoot' },
+  { label: 'Punch', clip: 'Punch_Right' },
+  { label: 'Kick', clip: 'Kick_Right' },
+  { label: 'Roll', clip: 'Roll' },
+  { label: 'Take hit', clip: 'HitRecieve' },
+  { label: 'Death', clip: 'Death' },
+];
 
 const canvas = document.getElementById('view');
 const engine = new BABYLON.Engine(canvas, true, { antialias: true, stencil: false });
 const scene = new BABYLON.Scene(engine);
-const mats = createMaterials(scene);
 
+const stage = createStage({ scene, engine, canvas });
 const params = new URLSearchParams(location.search);
 
-// URL synonyms for the catalogue categories, so gear can be composed straight
-// from the address bar: ?head=shemagh&eyewear=sunglasses&torso=bandolier&back=rpg
-const PARAM_ALIASES = {
-  headgear: ['headgear', 'head', 'helmet', 'hat'],
-  facial: ['facial', 'face', 'beard'],
-  eyewear: ['eyewear', 'glasses'],
-  torso: ['torso', 'vest', 'rig'],
-  back: ['back', 'pack'],
-  weapon: ['weapon', 'hands'],
-};
+let current = null; // active AnimationGroup
 
-/** Build a loadout from the URL: a named one, ad-hoc composition, or null (lineup). */
-function loadoutFromParams() {
-  const named = LOADOUTS[params.get('loadout')] ?? null;
-  const loadout = named ? { ...named } : { body: 'regular', pose: 'idle' };
+function play(name) {
+  const group = scene.animationGroups.find((g) => g.name === name);
+  if (!group) return false;
+  if (current && current !== group) current.stop();
+  group.start(true, 1.0, group.from, group.to, false);
+  current = group;
+  return true;
+}
 
-  let composed = false;
-  for (const category of Object.keys(CATEGORIES)) {
-    for (const alias of PARAM_ALIASES[category]) {
-      const value = params.get(alias);
-      if (value !== null) {
-        loadout[category] = value;
-        composed = true;
-        break;
+function addButton(bar, label, clip, extra = false) {
+  const b = document.createElement('button');
+  b.textContent = label;
+  b.dataset.clip = clip;
+  if (extra) b.className = 'extra';
+  b.addEventListener('click', () => {
+    play(clip);
+    for (const el of bar.children) el.classList.toggle('on', el === b);
+  });
+  bar.appendChild(b);
+  return b;
+}
+
+BABYLON.SceneLoader.ImportMeshAsync('', MODEL.dir, MODEL.file, scene)
+  .then((result) => {
+    // The loader auto-starts clips; take control before anything is visible.
+    for (const g of scene.animationGroups) g.stop();
+
+    const root = new BABYLON.TransformNode('figure', scene);
+    const drawable = result.meshes.filter((m) => m.getTotalVertices() > 0);
+    for (const m of result.meshes) {
+      if (!m.parent) m.parent = root;
+      m.receiveShadows = true;
+    }
+    for (const m of drawable) stage.shadows.addShadowCaster(m);
+
+    standOnBase(root, drawable, 0.06);
+
+    const bar = document.getElementById('clips');
+    const mapped = new Set();
+    for (const s of STAGES) {
+      if (scene.animationGroups.some((g) => g.name === s.clip)) {
+        addButton(bar, s.label, s.clip);
+        mapped.add(s.clip);
       }
     }
-  }
-  if (params.get('body')) {
-    loadout.body = params.get('body');
-    composed = true;
-  }
-  if (params.get('pose')) loadout.pose = params.get('pose');
+    for (const g of scene.animationGroups) {
+      if (!mapped.has(g.name)) addButton(bar, g.name.replace(/_/g, ' '), g.name, true);
+    }
 
-  return (named || composed) ? loadout : null;
-}
+    const wanted = params.get('clip');
+    const first = wanted && scene.animationGroups.some((g) => g.name === wanted) ? wanted : 'Idle';
+    play(first);
+    const match = [...bar.children].find((b) => b.dataset.clip === first);
+    if (match) match.classList.add('on');
 
-const SURFACE_Y = 0.06; // plinth top
-const SPACING = 1.15; // lineup shoulder room
+    document.getElementById('count').textContent =
+      `${scene.animationGroups.length} animations · CC0 Quaternius`;
 
-function addFigure(loadout, x = 0) {
-  const soldier = createSoldier({ scene, mats, loadout });
-  soldier.root.position.x = x;
-  for (const m of soldier.meshes) {
-    // Flat-shaded facets are the whole look — Babylon needs this per mesh.
-    m.convertToFlatShadedMesh();
-    stage.shadows.addShadowCaster(m);
-    m.receiveShadows = true;
-  }
-  standOnBase(soldier.root, soldier.meshes, SURFACE_Y);
-  return soldier;
-}
-
-const single = loadoutFromParams();
-const stage = createStage({
-  scene, engine, canvas, mats,
-  lineup: single ? null : { width: ROSTER.length * SPACING + 0.9 },
-});
-
-const soldiers = [];
-if (single) {
-  soldiers.push(addFigure(single));
-} else {
-  for (const [i, name] of ROSTER.entries()) {
-    // Negative spacing: the camera sits on +Z, so +X is screen-left.
-    soldiers.push(addFigure(LOADOUTS[name], ((ROSTER.length - 1) / 2 - i) * SPACING));
-  }
-}
-
-if (params.has('debug')) {
-  window.__soldier = { scene, engine, stage, soldiers, soldier: soldiers[0] };
-}
+    if (params.has('debug')) window.__soldier = { scene, engine, stage, root, result };
+  })
+  .catch((err) => {
+    console.error('[soldier] model load failed:', err);
+    document.getElementById('count').textContent = 'model failed to load';
+  });
 
 engine.runRenderLoop(() => scene.render());
 window.addEventListener('resize', () => engine.resize());
-// The lineup stays put for side-by-side judging; a lone figure slowly turns.
-if (single) attachTurntable({ scene, camera: stage.camera, canvas });
+attachTurntable({ scene, camera: stage.camera, canvas });

@@ -4,27 +4,54 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Poly Soldier</title>
-<meta name="description" content="A modular low-poly soldier rendered in Babylon.js.">
+<meta name="description" content="A rigged low-poly soldier with a full animation set, rendered in Babylon.js.">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { height: 100%; overflow: hidden; background: #20242b; }
+  html, body { height: 100%; overflow: hidden; background: #20242b;
+    font-family: "Avenir Next", Avenir, "Segoe UI", system-ui, sans-serif; }
   #view { width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
-  #label {
-    position: fixed; left: 20px; bottom: 18px;
-    font: 500 12px/1.5 "Avenir Next", Avenir, "Segoe UI", system-ui, sans-serif;
-    letter-spacing: .18em; text-transform: uppercase; color: #7f8794;
-    pointer-events: none; user-select: none;
+
+  #hud { position: fixed; left: 0; right: 0; bottom: 0; padding: 14px 18px 16px;
+    pointer-events: none; }
+  #clips { display: flex; flex-wrap: wrap; gap: 6px; pointer-events: auto; }
+  #clips button {
+    pointer-events: auto; cursor: pointer;
+    background: rgba(255,255,255,.06); color: #b8c0cc;
+    border: 1px solid rgba(255,255,255,.10); border-radius: 4px;
+    padding: 6px 11px; font: 600 11px/1 inherit;
+    letter-spacing: .09em; text-transform: uppercase;
+    transition: background .12s, color .12s, border-color .12s;
   }
-  #label b { color: #c3cad4; font-weight: 600; }
+  #clips button:hover { background: rgba(255,255,255,.12); color: #e6ebf2; }
+  #clips button.on { background: #cf7d3c; border-color: #cf7d3c; color: #16181d; }
+  #clips button.extra { opacity: .58; text-transform: none; letter-spacing: .04em; }
+  #clips button.extra.on { opacity: 1; }
+
+  #meta { margin-top: 10px; font: 500 11px/1.5 inherit; letter-spacing: .12em;
+    text-transform: uppercase; color: #6d7581; }
+  #meta b { color: #aeb7c3; font-weight: 600; }
+
+  @media (max-width: 640px) {
+    #clips button { padding: 5px 9px; font-size: 10px; }
+    #clips button.extra { display: none; }
+  }
 </style>
 </head>
 <body>
 <canvas id="view" touch-action="none"></canvas>
-<div id="label"><b>Poly Soldier</b> — drag to orbit, scroll to zoom</div>
+<div id="hud">
+  <div id="clips"></div>
+  <div id="meta"><b>Poly Soldier</b> — drag to orbit, scroll to zoom · <span id="count">loading…</span></div>
+</div>
 
 <script
   src="https://cdn.jsdelivr.net/npm/babylonjs@9.18.1/babylon.js"
   integrity="sha384-PHVMLQIlVKtLXOC0vSJTdGPLWru+b8vwe3YKDjM39sdPGcM7RPIdRh39jYC2zkGY"
+  crossorigin="anonymous"
+  referrerpolicy="no-referrer"></script>
+<script
+  src="https://cdn.jsdelivr.net/npm/babylonjs-loaders@9.18.1/babylonjs.loaders.min.js"
+  integrity="sha384-GSL/0d8hiK3bjSwbNqgp6VOVwgKRlhm0l6pXNOdFkPjS5YrRhHHy/03bN8DbJ9bq"
   crossorigin="anonymous"
   referrerpolicy="no-referrer"></script>
 <script type="module" src="./main.js"></script>
