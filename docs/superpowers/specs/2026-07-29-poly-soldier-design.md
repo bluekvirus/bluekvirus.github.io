@@ -94,11 +94,51 @@ renders as Babylon instances of one geometry rather than duplicated meshes.
   `ArcRotateCamera`, damped, with sensible zoom limits).
 - Flat/faceted shading throughout — the low-poly facets must read clearly.
 
+### Articulated joint hierarchy (added 2026-07-29 — the figure must animate)
+
+The end goal is soldiers that fight on a tactical map: moving, shooting, reloading,
+close-quarter combat. That makes the figure an **articulated rig from the start**,
+not a merged static mesh.
+
+Because the style is blocky and rigid, this needs **no skinning and no bones** —
+each limb segment is its own mesh parented to a joint `TransformNode`, and
+animation is joint rotation. A `Blockbench`-style rigid hierarchy:
+
+```
+root
+└ pelvis ── hips ── thighL/R ── shinL/R ── footL/R
+   └ spine ── chest ── (socket: chest, back)
+        ├ neck ── head (socket: head)
+        ├ shoulderL ── upperArmL ── forearmL ── handL (socket)
+        └ shoulderR ── upperArmR ── forearmR ── handR (socket)
+```
+
+Consequences:
+- Parts attach to joints, so sockets and the rig are the same mechanism.
+- Poses and animations are data: named joint-rotation sets, interpolated over time.
+  A pose library (`idle`, `aim`, `walk`, `reload`) sits in its own module.
+- Merging geometry is limited to *within* a joint (e.g. all of a vest's pouches),
+  never across joints, so articulation survives.
+
+## Roadmap (user-defined build order)
+
+Each stage renders and is reviewed before the next begins.
+
+1. **Single soldier** — the rigged figure standing in a neutral idle on its base.
+2. **Soldier holding a gun** — weapon in the hand socket, arms posed to grip it,
+   both hands correctly placed on the weapon.
+3. **Move with gun** — a walk/advance cycle driven by joint rotation, weapon held.
+4. **Shoot and reload** — firing pose with recoil and muzzle flash; a reload
+   sequence (magazine out, in, charging handle).
+
+Only after stage 4 do we add more figures, factions or a map.
+
 ## Budgets
 
-Roughly 1-3k triangles for the figure, merged so the whole thing is a handful of
-draw calls. This is a single-figure display page; the constraint exists to keep
-the modular structure honest, not because the hardware is stressed.
+Roughly 1-3k triangles for the figure. Merged only within joints, so expect on the
+order of 15-25 meshes rather than a handful — articulation costs draw calls and
+that is the correct trade here. This is a single-figure display page; the budget
+exists to keep the modular structure honest, not because the hardware is stressed.
 
 ## Verification
 
