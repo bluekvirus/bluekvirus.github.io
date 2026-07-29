@@ -215,31 +215,47 @@ function buildHull() {
 // ---- rotor blur discs (each its own drawable so it can spin about its own
 // hub, independent of the other) ----
 
+// Convert a THREE.Color and alpha value to an rgba() CSS string, sourcing all
+// colors from the palette to maintain a single source of truth.
+function rgba(color, alpha) {
+  const r = Math.round(color.r * 255);
+  const g = Math.round(color.g * 255);
+  const b = Math.round(color.b * 255);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 function buildRotorTexture() {
   const size = 128;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d');
   const cx = size / 2, cy = size / 2, r = size / 2;
+
+  // Radial gradient: dark hull color fading to transparent (from palette).
+  const darkColor = new THREE.Color(COLORS.hullDark);
   const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-  grad.addColorStop(0, 'rgba(20,20,20,0.55)');
-  grad.addColorStop(0.55, 'rgba(20,20,20,0.4)');
-  grad.addColorStop(0.85, 'rgba(20,20,20,0.22)');
-  grad.addColorStop(1, 'rgba(20,20,20,0)');
+  grad.addColorStop(0, rgba(darkColor, 0.55));
+  grad.addColorStop(0.55, rgba(darkColor, 0.4));
+  grad.addColorStop(0.85, rgba(darkColor, 0.22));
+  grad.addColorStop(1, rgba(darkColor, 0));
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, size, size);
+
   // faint blade-blur streaks so the disc doesn't read as a flat uniform
-  // wash — three soft dark wedges, evenly spaced.
+  // wash — three soft bright wedges, evenly spaced. These blend with multiply,
+  // so white acts as no-op (peak brightness) and grey darkens.
   ctx.globalCompositeOperation = 'multiply';
+  const bladeWhite = new THREE.Color(COLORS.rotorBladeWhite);
+  const bladeMid = new THREE.Color(COLORS.hullTrim);
   for (let b = 0; b < 3; b++) {
     const a = (b / 3) * Math.PI * 2;
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(a);
     const wedge = ctx.createLinearGradient(0, 0, r, 0);
-    wedge.addColorStop(0, 'rgba(255,255,255,1)');
-    wedge.addColorStop(0.5, 'rgba(160,160,160,1)');
-    wedge.addColorStop(1, 'rgba(255,255,255,1)');
+    wedge.addColorStop(0, rgba(bladeWhite, 1));
+    wedge.addColorStop(0.5, rgba(bladeMid, 1));
+    wedge.addColorStop(1, rgba(bladeWhite, 1));
     ctx.fillStyle = wedge;
     ctx.beginPath();
     ctx.moveTo(0, 0);

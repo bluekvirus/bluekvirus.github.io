@@ -32,4 +32,9 @@ export const COLORS = {
   smokeGrey: 0x6b5f66,
   dustTan: 0xcaa06a,
   engineGlow: 0xff5a3c,
+  // Task 4: pure white for rotor blade highlights in the thopter texture.
+  // Used in the blade-streak gradient to create bright highlights that stand
+  // out under the multiply blend mode — pure white (255,255,255) has no effect
+  // when multiplied and serves as the peak of the blade-brightness curve.
+  rotorBladeWhite: 0xffffff,
 };

@@ -128,3 +128,7 @@ test('hullDark and harkRed remain for troops and the escort ornithopter', () => 
 test('hullTrim (cold metallic trim for the escort ornithopter) is added', () => {
   assert.equal(COLORS.hullTrim, 0x6e6e6e);
 });
+
+test('rotorBladeWhite (rotor blade texture highlights) is added', () => {
+  assert.equal(COLORS.rotorBladeWhite, 0xffffff);
+});
