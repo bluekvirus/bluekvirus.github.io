@@ -151,7 +151,9 @@ export async function mount(container) {
   scene.add(props.group);
   state.updaters.push(props);
 
-  const fx = createCombatFX(troops.units);
+  // Task 5: FX reports tracer landings back to troops (the kill roll +
+  // attrition state all live in troops.js — combatfx only reports).
+  const fx = createCombatFX(troops.units, troops.reportImpact);
   scene.add(fx.group);
   state.updaters.push(fx);
 

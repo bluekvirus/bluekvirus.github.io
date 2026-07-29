@@ -242,6 +242,122 @@ const TARGET_FOR_HARK = (() => {
 })();
 const TARGET_FOR_FREMEN = { x: LAYOUT.harkArc.cx, z: LAYOUT.harkArc.cz };
 
+// ---- Task 5: living attrition ----
+//
+// A seeded PRNG *stream* (mulberry32 from a constant seed) drives every
+// stochastic decision: kill rolls, fall scatter, body persistence, and the
+// reinforcement stagger. The stream is advanced ONLY inside reportImpact()'s
+// kill path (and the two build-time scripted casualties) — never per frame,
+// never Math.random(). Under reduced motion dt === 0, combatfx spawns no
+// tracers, so no impacts are ever reported and the stream never moves: the
+// frozen frame is bit-stable across repeated update(0, elapsed) calls.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), a | 1);
+    t = (t + Math.imul(t ^ (t >>> 7), t | 61)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const KILL_CHANCE = 0.22;      // per reported tracer impact (spec §5)
+const DYING_DUR = 0.8;         // fall-to-prone
+const DOWN_MIN = 16, DOWN_VAR = 7;   // prone body persists ~16-23s (spec "~20s")
+const SINK_DUR = 3.0;          // body sinks into the sand at the end of DOWN
+const SINK_DEPTH = 3.2;        // enough to fully bury a prone torso (+lift)
+const PRONE_LIFT = 0.6;        // prone body rides slightly proud of the dune
+const FALL_ANGLE = Math.PI * 0.47;   // just short of dead flat
+const REINF_DELAY_MIN = 1.5, REINF_DELAY_VAR = 5.5; // stagger after the sink
+// Per-faction kill pacing: without it, the impact rate (~10/s across the
+// field at 22%/hit) would pin both factions at the nominal-3 floor within
+// seconds and the gate below would do all the work — the line would read as
+// a constant-strength churn, not visible thinning-and-refilling. One kill
+// per faction per ~7-13s keeps live counts *wandering* inside the ±3 band.
+const KILL_COOLDOWN_MIN = 7, KILL_COOLDOWN_VAR = 6;
+const STRENGTH_FLOOR = 3;      // live count never drops below nominal-3 (never wiped)
+const ARRIVE_EPS = 1.3;        // walk -> normal handoff distance (no visible snap)
+const WP_EPS = 5;              // fixed entry-waypoint pass distance
+const AVOID_R = 5;             // walkers steer softly off other live units inside this
+const AVOID_GAIN = 3;          // soft steer strength (units/sec at full overlap)
+const HARD_SEP = 3.5;          // hard-clamped walker separation (> the 3-unit check)
+const REINF_SPEED_FREMEN = 30; // dash-in speed (matches Fremen dash pace)
+const REINF_SPEED_HARK = 24;
+const WALK_BOB_FREQ = 9;
+
+// Pure evaluation of the looping choreography (formerly updateFremenUnit /
+// updateHarkUnit): where WOULD this unit be at `elapsed`, and what would it
+// be doing? Split out from composition so the attrition machine can (a) run
+// the normal path, (b) chase this moving pose as a reinforcement target, and
+// (c) back-scan for a holding moment when scripting the build-time bodies.
+function evalFremen(cfg, elapsed, out) {
+  const segLen = cfg.dashDur + cfg.holdDur;
+  const loopLen = segLen * cfg.wp.length;
+  const tRaw = elapsed + cfg.phase;
+  const tt = ((tRaw % loopLen) + loopLen) % loopLen;
+  const segIndex = Math.floor(tt / segLen);
+  const localT = tt - segIndex * segLen;
+  const from = cfg.wp[segIndex];
+  const to = cfg.wp[(segIndex + 1) % cfg.wp.length];
+
+  if (localT < cfg.dashDur) {
+    const s = localT / cfg.dashDur;
+    const se = smoothstep(0, 1, s);
+    out.x = lerp(from[0], to[0], se);
+    out.z = lerp(from[1], to[1], se);
+    out.yaw = Math.atan2(to[1] - from[1], to[0] - from[0]);
+    out.bob = Math.abs(Math.sin(s * Math.PI * BOB_CYCLES)) * BOB_AMT;
+    out.yScale = RUN_SCALE;
+    out.firing = false;
+    out.moving = true;
+  } else {
+    const holdT = localT - cfg.dashDur;
+    out.x = to[0];
+    out.z = to[1];
+    out.firing = holdT >= cfg.fireStart && holdT < cfg.fireStart + FIRE_WINDOW;
+    out.yaw = Math.atan2(TARGET_FOR_FREMEN.z - out.z, TARGET_FOR_FREMEN.x - out.x);
+    out.yScale = KNEEL_SCALE;
+    out.bob = 0;
+    out.moving = false;
+  }
+}
+
+function evalHark(cfg, elapsed, out) {
+  const cycleLen = cfg.fireDur + SHIFT_DUR;
+  const tRaw = elapsed + cfg.phase;
+  const tt = ((tRaw % cycleLen) + cycleLen) % cycleLen;
+  const k = Math.floor(tRaw / cycleLen);
+  const evenK = ((k % 2) + 2) % 2 === 0;
+
+  let offset, firing, yScale, dirSign = 1;
+  if (tt < cfg.fireDur) {
+    offset = evenK ? 0 : cfg.shiftAmt;
+    firing = true;
+    yScale = KNEEL_SCALE;
+    out.moving = false;
+  } else {
+    const shiftT = tt - cfg.fireDur;
+    const s = shiftT / SHIFT_DUR;
+    const from = evenK ? 0 : cfg.shiftAmt;
+    const to = evenK ? cfg.shiftAmt : 0;
+    offset = lerp(from, to, smoothstep(0, 1, s));
+    firing = false;
+    dirSign = to > from ? 1 : -1;
+    // rise mid-shuffle, settle back to kneel by either end
+    yScale = lerp(KNEEL_SCALE, 1, Math.sin(Math.PI * s));
+    out.moving = true;
+  }
+
+  out.x = cfg.baseX + cfg.tangentX * offset;
+  out.z = cfg.baseZ + cfg.tangentZ * offset;
+  out.yaw = firing
+    ? Math.atan2(TARGET_FOR_HARK.z - out.z, TARGET_FOR_HARK.x - out.x)
+    : Math.atan2(cfg.tangentZ * dirSign, cfg.tangentX * dirSign);
+  out.firing = firing;
+  out.yScale = yScale;
+  out.bob = 0;
+}
+
 // ---- public factory ----
 
 export function createTroops() {
@@ -293,8 +409,9 @@ export function createTroops() {
     harkGeo.accentOffset.x, harkGeo.accentOffset.y, harkGeo.accentOffset.z,
   );
 
-  // units[] is the Task-5 contract: fixed array, Vector3s allocated once,
-  // faction/pos/firing/muzzleY mutated in place every frame.
+  // units[] is the shared contract with combatfx: fixed array, Vector3s
+  // allocated once; faction/pos/firing/muzzleY/alive/state mutated in place
+  // every frame. `firing` is false unless state === 'fire' && alive.
   const units = [];
   const fremenConfigs = [];
   for (let i = 0; i < FREMEN_COUNT; i++) {
@@ -312,7 +429,10 @@ export function createTroops() {
     const fireStart = (holdDur - FIRE_WINDOW) / 2;    // centered fire window
     const phase = seedFrac(i, 3) * 12;                // desync offset
     fremenConfigs.push({ wp, dashDur, holdDur, fireStart, phase });
-    units.push({ faction: 'fremen', pos: new THREE.Vector3(), firing: false, muzzleY: fremenGeo.muzzleY });
+    units.push({
+      faction: 'fremen', pos: new THREE.Vector3(), firing: false,
+      muzzleY: fremenGeo.muzzleY, alive: true, state: 'cover',
+    });
   }
   const harkConfigs = [];
   for (let i = 0; i < HARK_COUNT; i++) {
@@ -325,7 +445,52 @@ export function createTroops() {
     const shiftAmt = 2 + seedFrac(i, 6) * 1;  // 2-3 units
     const phase = seedFrac(i, 7) * 10;
     harkConfigs.push({ baseX, baseZ, tangentX, tangentZ, fireDur, shiftAmt, phase });
-    units.push({ faction: 'hark', pos: new THREE.Vector3(), firing: false, muzzleY: harkGeo.muzzleY });
+    units.push({
+      faction: 'hark', pos: new THREE.Vector3(), firing: false,
+      muzzleY: harkGeo.muzzleY, alive: true, state: 'cover',
+    });
+  }
+
+  // ---- attrition state (all preallocated — zero per-frame allocations) ----
+
+  const rng = mulberry32(0x5eed5a7d);
+  let rngDraws = 0;
+  const draw = () => { rngDraws++; return rng(); };
+
+  const factions = {
+    fremen: {
+      nominal: FREMEN_COUNT, live: FREMEN_COUNT, deaths: 0, nextKillOk: -Infinity,
+      body: fremenBody, accent: fremenAccent, offsetMat: FREMEN_EYE_OFFSET,
+      baseMuzzleY: fremenGeo.muzzleY, speed: REINF_SPEED_FREMEN, wps: LAYOUT.reinforce.fremen,
+    },
+    hark: {
+      nominal: HARK_COUNT, live: HARK_COUNT, deaths: 0, nextKillOk: -Infinity,
+      body: harkBody, accent: harkAccent, offsetMat: HARK_VISOR_OFFSET,
+      baseMuzzleY: harkGeo.muzzleY, speed: REINF_SPEED_HARK, wps: LAYOUT.reinforce.hark,
+    },
+  };
+
+  // Per-unit attrition record. `mode` is the internal driver ('normal' |
+  // 'dead' | 'walk'); the public unit.state ('advance'/'cover'/'fire'/
+  // 'dying'/'down'/'reinforce') is derived from it every frame. The whole
+  // 'dead' arc (dying -> down -> sink -> hidden-await) is a fixed timeline
+  // from t0, fully drawn at kill time, so stepping it is a pure function of
+  // elapsed — idempotent under a frozen clock.
+  const att = [];
+  const unitCtl = [];
+  for (let i = 0; i < units.length; i++) {
+    const isFremen = i < FREMEN_COUNT;
+    unitCtl.push({
+      fac: isFremen ? factions.fremen : factions.hark,
+      cfg: isFremen ? fremenConfigs[i] : harkConfigs[i - FREMEN_COUNT],
+      meshIndex: isFremen ? i : i - FREMEN_COUNT,
+      eval: isFremen ? evalFremen : evalHark,
+    });
+    att.push({
+      mode: 'normal', t0: 0, downDur: 0, reinforceAt: 0,
+      fallX: 0, fallZ: 0, fallGy: 0, fallYaw: 0, fallSign: -1, yaw: 0,
+      x: 0, z: 0, leg: 0,
+    });
   }
 
   // reused scratch objects — zero per-frame allocations
@@ -334,10 +499,14 @@ export function createTroops() {
   const _scale = new THREE.Vector3(1, 1, 1);
   const _bodyMat = new THREE.Matrix4();
   const _accentMat = new THREE.Matrix4();
+  const _pose = { x: 0, z: 0, yaw: 0, yScale: 1, bob: 0, firing: false, moving: false };
 
-  function composeUnit(unit, x, y, z, yaw, yScale, bodyMesh, accentMesh, offsetMat, index) {
+  // roll (rotation about local Z with Euler order XYZ => applied before yaw)
+  // pitches the +X-facing figure onto its face (roll < 0) or back (roll > 0),
+  // pivoting at the feet — the death fall needs no second geometry.
+  function composeUnit(unit, x, y, z, yaw, roll, yScale, bodyMesh, accentMesh, offsetMat, index) {
     unit.pos.set(x, y, z);
-    _euler.set(0, yaw, 0);
+    _euler.set(0, yaw, roll);
     _quat.setFromEuler(_euler);
     _scale.set(1, yScale, 1);
     _bodyMat.compose(unit.pos, _quat, _scale);
@@ -346,81 +515,164 @@ export function createTroops() {
     accentMesh.setMatrixAt(index, _accentMat);
   }
 
-  function updateFremenUnit(unit, cfg, elapsed, index, baseMuzzleY) {
-    const segLen = cfg.dashDur + cfg.holdDur;
-    const loopLen = segLen * cfg.wp.length;
-    const tRaw = elapsed + cfg.phase;
-    const tt = ((tRaw % loopLen) + loopLen) % loopLen;
-    const segIndex = Math.floor(tt / segLen);
-    const localT = tt - segIndex * segLen;
-    const from = cfg.wp[segIndex];
-    const to = cfg.wp[(segIndex + 1) % cfg.wp.length];
-
-    let x, z, yaw, firing = false, yScale, bob = 0;
-    if (localT < cfg.dashDur) {
-      const s = localT / cfg.dashDur;
-      const se = smoothstep(0, 1, s);
-      x = lerp(from[0], to[0], se);
-      z = lerp(from[1], to[1], se);
-      yaw = Math.atan2(to[1] - from[1], to[0] - from[0]);
-      bob = Math.abs(Math.sin(s * Math.PI * BOB_CYCLES)) * BOB_AMT;
-      yScale = RUN_SCALE;
-    } else {
-      const holdT = localT - cfg.dashDur;
-      x = to[0]; z = to[1];
-      firing = holdT >= cfg.fireStart && holdT < cfg.fireStart + FIRE_WINDOW;
-      yaw = Math.atan2(TARGET_FOR_FREMEN.z - z, TARGET_FOR_FREMEN.x - x);
-      yScale = KNEEL_SCALE;
-    }
-
-    const gy = duneHeight(x, z) + bob;
-    unit.firing = firing;
-    unit.muzzleY = baseMuzzleY * yScale;
-    composeUnit(unit, x, gy, z, yaw, yScale, fremenBody, fremenAccent, FREMEN_EYE_OFFSET, index);
+  function stepNormal(i, elapsed) {
+    const unit = units[i], a = att[i], ctl = unitCtl[i], fac = ctl.fac;
+    ctl.eval(ctl.cfg, elapsed, _pose);
+    unit.state = _pose.moving ? 'advance' : (_pose.firing ? 'fire' : 'cover');
+    unit.firing = _pose.firing;
+    unit.muzzleY = fac.baseMuzzleY * _pose.yScale;
+    a.yaw = _pose.yaw;
+    composeUnit(unit, _pose.x, duneHeight(_pose.x, _pose.z) + _pose.bob, _pose.z,
+      _pose.yaw, 0, _pose.yScale, fac.body, fac.accent, fac.offsetMat, ctl.meshIndex);
   }
 
-  function updateHarkUnit(unit, cfg, elapsed, index, baseMuzzleY) {
-    const cycleLen = cfg.fireDur + SHIFT_DUR;
-    const tRaw = elapsed + cfg.phase;
-    const tt = ((tRaw % cycleLen) + cycleLen) % cycleLen;
-    const k = Math.floor(tRaw / cycleLen);
-    const evenK = ((k % 2) + 2) % 2 === 0;
+  // The kill itself: consumes 4 PRNG draws (scatter yaw, fall direction,
+  // body persistence, reinforcement stagger) + 1 for the faction cooldown.
+  function killUnit(i, elapsed) {
+    const unit = units[i], a = att[i], fac = unitCtl[i].fac;
+    a.mode = 'dead';
+    a.t0 = elapsed;
+    a.fallX = unit.pos.x;
+    a.fallZ = unit.pos.z;
+    a.fallGy = duneHeight(a.fallX, a.fallZ);
+    a.fallYaw = a.yaw + (draw() - 0.5) * 1.1;   // slight yaw scatter
+    a.fallSign = draw() < 0.3 ? 1 : -1;         // ~30% crumple backward
+    a.downDur = DOWN_MIN + draw() * DOWN_VAR;
+    a.reinforceAt = elapsed + DYING_DUR + a.downDur + SINK_DUR
+      + REINF_DELAY_MIN + draw() * REINF_DELAY_VAR;
+    fac.nextKillOk = elapsed + KILL_COOLDOWN_MIN + draw() * KILL_COOLDOWN_VAR;
+    fac.live--;
+    fac.deaths++;
+    unit.alive = false;
+    unit.firing = false;
+    unit.state = 'dying';
+  }
 
-    let offset, firing, yScale, dirSign = 1;
-    if (tt < cfg.fireDur) {
-      offset = evenK ? 0 : cfg.shiftAmt;
-      firing = true;
-      yScale = KNEEL_SCALE;
-    } else {
-      const shiftT = tt - cfg.fireDur;
-      const s = shiftT / SHIFT_DUR;
-      const from = evenK ? 0 : cfg.shiftAmt;
-      const to = evenK ? cfg.shiftAmt : 0;
-      offset = lerp(from, to, smoothstep(0, 1, s));
-      firing = false;
-      dirSign = to > from ? 1 : -1;
-      // rise mid-shuffle, settle back to kneel by either end
-      yScale = lerp(KNEEL_SCALE, 1, Math.sin(Math.PI * s));
+  // Contract entry point: combatfx calls this when a tracer lands on a unit.
+  // Troops owns the kill roll and all resulting state. The PRNG stream is
+  // touched ONLY here (and in the build-time scripted casualties below).
+  function reportImpact(index, elapsed) {
+    const unit = units[index], a = att[index];
+    if (!unit || !unit.alive || a.mode !== 'normal') return;
+    // Kills land only on HOLDING units ('cover'/'fire'): hold spots are the
+    // offline-solved de-conflicted positions (see FREMEN_WP_OFFSET), so a
+    // body never comes to rest on another live unit's hold — a mid-dash
+    // death could drop a body anywhere on a crossing dash lane.
+    if (unit.state !== 'cover' && unit.state !== 'fire') return;
+    const fac = unitCtl[index].fac;
+    if (elapsed < fac.nextKillOk) return;                     // faction pacing
+    if (fac.live - 1 < fac.nominal - STRENGTH_FLOOR) return;  // ±3 band / never wiped
+    if (draw() >= KILL_CHANCE) return;                        // the 22% roll
+    killUnit(index, elapsed);
+  }
+
+  function stepDead(i, dt, elapsed) {
+    const unit = units[i], a = att[i], ctl = unitCtl[i], fac = ctl.fac;
+    const td = elapsed - a.t0;
+    if (td < DYING_DUR) {
+      // fall: an accelerating topple (k^2 — gravity, not an ease-out glide)
+      unit.state = 'dying';
+      const k = Math.max(0, td) / DYING_DUR;
+      const e = k * k;
+      composeUnit(unit, a.fallX, a.fallGy + PRONE_LIFT * e, a.fallZ,
+        lerp(a.yaw, a.fallYaw, e), a.fallSign * FALL_ANGLE * e,
+        lerp(KNEEL_SCALE, 1, e), fac.body, fac.accent, fac.offsetMat, ctl.meshIndex);
+      return;
     }
+    const sinkT = td - DYING_DUR - a.downDur;
+    if (sinkT < SINK_DUR) {
+      // prone on the sand (sinkT < 0), then sinking under it (0..SINK_DUR)
+      unit.state = 'down';
+      const s = sinkT <= 0 ? 0 : smoothstep(0, 1, sinkT / SINK_DUR);
+      composeUnit(unit, a.fallX, a.fallGy + PRONE_LIFT - SINK_DEPTH * s, a.fallZ,
+        a.fallYaw, a.fallSign * FALL_ANGLE, 1, fac.body, fac.accent, fac.offsetMat, ctl.meshIndex);
+      return;
+    }
+    // recycled: hidden below the terrain until the staggered re-entry time
+    unit.state = 'reinforce';
+    if (elapsed >= a.reinforceAt) {
+      a.mode = 'walk';
+      a.leg = 1;
+      a.x = fac.wps[0][0];
+      a.z = fac.wps[0][1];
+      unit.alive = true;
+      fac.live++;
+      return; // composed by update()'s walker pass, same frame
+    }
+    composeUnit(unit, a.fallX, -4000, a.fallZ, 0, 0, 1,
+      fac.body, fac.accent, fac.offsetMat, ctl.meshIndex);
+  }
 
-    const x = cfg.baseX + cfg.tangentX * offset;
-    const z = cfg.baseZ + cfg.tangentZ * offset;
-    const yaw = firing
-      ? Math.atan2(TARGET_FOR_HARK.z - z, TARGET_FOR_HARK.x - x)
-      : Math.atan2(cfg.tangentZ * dirSign, cfg.tangentX * dirSign);
-
-    const gy = duneHeight(x, z);
-    unit.firing = firing;
-    unit.muzzleY = baseMuzzleY * yScale;
-    composeUnit(unit, x, gy, z, yaw, yScale, harkBody, harkAccent, HARK_VISOR_OFFSET, index);
+  function stepWalk(i, dt, elapsed) {
+    const unit = units[i], a = att[i], ctl = unitCtl[i], fac = ctl.fac;
+    unit.state = 'reinforce';
+    unit.firing = false;
+    // Current target: remaining fixed entry waypoints first, then chase the
+    // unit's own looping pose (a moving target — it converges during holds).
+    let tx, tz;
+    if (a.leg < fac.wps.length) {
+      tx = fac.wps[a.leg][0];
+      tz = fac.wps[a.leg][1];
+    } else {
+      ctl.eval(ctl.cfg, elapsed, _pose);
+      tx = _pose.x;
+      tz = _pose.z;
+    }
+    let dx = tx - a.x, dz = tz - a.z;
+    const dist = Math.hypot(dx, dz);
+    if (a.leg < fac.wps.length) {
+      if (dist < WP_EPS) { a.leg++; stepWalk(i, dt, elapsed); return; }
+    } else if (dist < ARRIVE_EPS) {
+      // arrived at (essentially) the loop pose: hand back to normal behavior
+      a.mode = 'normal';
+      stepNormal(i, elapsed);
+      return;
+    }
+    if (dt > 0 && dist > 1e-6) {
+      const step = Math.min(dist, fac.speed * dt);
+      a.x += (dx / dist) * step;
+      a.z += (dz / dist) * step;
+      // De-confliction for the walk-in: soft steer away from any live unit
+      // inside AVOID_R, hard-clamped to HARD_SEP (with a tangential slide so
+      // a dead-center approach can't wedge) — live units never overlap.
+      for (let pass = 0; pass < 2; pass++) {
+        for (let j = 0; j < units.length; j++) {
+          if (j === i || !units[j].alive) continue;
+          const rx = a.x - units[j].pos.x, rz = a.z - units[j].pos.z;
+          const d2 = rx * rx + rz * rz;
+          if (d2 >= AVOID_R * AVOID_R || d2 < 1e-9) continue;
+          const d = Math.sqrt(d2);
+          if (d < HARD_SEP) {
+            a.x = units[j].pos.x + (rx / d) * HARD_SEP - (rz / d) * step * 0.5;
+            a.z = units[j].pos.z + (rz / d) * HARD_SEP + (rx / d) * step * 0.5;
+          } else {
+            const push = (AVOID_R - d) * AVOID_GAIN * dt / d;
+            a.x += rx * push;
+            a.z += rz * push;
+          }
+        }
+      }
+    }
+    const yaw = Math.atan2(tz - a.z, tx - a.x);
+    a.yaw = yaw;
+    const bob = Math.abs(Math.sin(elapsed * WALK_BOB_FREQ + i * 1.7)) * BOB_AMT * 0.8;
+    unit.muzzleY = fac.baseMuzzleY * RUN_SCALE;
+    composeUnit(unit, a.x, duneHeight(a.x, a.z) + bob, a.z, yaw, 0, RUN_SCALE,
+      fac.body, fac.accent, fac.offsetMat, ctl.meshIndex);
   }
 
   function update(dt, elapsed) {
-    for (let i = 0; i < FREMEN_COUNT; i++) {
-      updateFremenUnit(units[i], fremenConfigs[i], elapsed, i, fremenGeo.muzzleY);
+    // Walkers are stepped AFTER every scripted unit so their avoidance reads
+    // current-frame positions: clamping against a stale previous-frame pos
+    // let a fast-dashing unit close the gap under the separation floor
+    // (2.99 units at t=101s, behavioral verification round 1).
+    for (let i = 0; i < units.length; i++) {
+      const m = att[i].mode;
+      if (m === 'normal') stepNormal(i, elapsed);
+      else if (m === 'dead') stepDead(i, dt, elapsed);
     }
-    for (let i = 0; i < HARK_COUNT; i++) {
-      updateHarkUnit(units[FREMEN_COUNT + i], harkConfigs[i], elapsed, i, harkGeo.muzzleY);
+    for (let i = 0; i < units.length; i++) {
+      if (att[i].mode === 'walk') stepWalk(i, dt, elapsed);
     }
     fremenBody.instanceMatrix.needsUpdate = true;
     harkBody.instanceMatrix.needsUpdate = true;
@@ -428,10 +680,42 @@ export function createTroops() {
     harkAccent.instanceMatrix.needsUpdate = true;
   }
 
+  // Two casualties scripted at build time so the battle already has history
+  // on frame one — and so the reduced-motion frozen frame (elapsed=9, dt=0
+  // forever: no impacts can ever be reported) still includes the body-or-two
+  // spec §5 requires. Death times are pre-FIRE_WINDOW-negative so both are
+  // mid-'down' at elapsed 9 (downDur >= 16 => down until at least t=9.8);
+  // in normal playback they sink and reinforce like any other casualty.
+  function scriptDeath(i, tDeath) {
+    const ctl = unitCtl[i];
+    let t = tDeath;
+    for (let guard = 0; guard < 100; guard++) {  // back up to a holding moment
+      ctl.eval(ctl.cfg, t, _pose);
+      if (!_pose.moving) break;
+      t -= 0.1;
+    }
+    units[i].pos.set(_pose.x, 0, _pose.z); // killUnit reads pos.x/z
+    att[i].yaw = _pose.yaw;
+    killUnit(i, t);
+  }
+  scriptDeath(2, -4);                 // a Fremen body on the forward line
+  scriptDeath(FREMEN_COUNT + 4, -7);  // a Harkonnen body on the arc
+
   // Warm-start so the very first rendered frame (and frozen reduced-motion
   // mode) already shows a fully posed, grounded squad rather than the
   // identity-matrix pose at t=0.
   update(0, 0);
 
-  return { group, update, units };
+  return {
+    group, update, units, reportImpact,
+    // Debug/verification handle (allocates only when called — never in the
+    // frame path): PRNG draw counter + per-faction live/death tallies.
+    attrition: {
+      draws: () => rngDraws,
+      stats: () => ({
+        fremen: { live: factions.fremen.live, deaths: factions.fremen.deaths },
+        hark: { live: factions.hark.live, deaths: factions.hark.deaths },
+      }),
+    },
+  };
 }

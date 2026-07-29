@@ -30,6 +30,26 @@ export const LAYOUT = {
   // Two wrecked-vehicle smoke-column sites flanking the Harkonnen arc's
   // ends (battle-damage story) — coordinates only, FX lives in combatfx.js.
   wrecks: [[58, -316], [17, -184]],
+  // Task 5: reinforcement entry routes (coordinates only — the attrition
+  // state machine lives in troops.js). Each faction gets an ordered list of
+  // [x, z] waypoints a recycled unit spawns at / walks through before
+  // chasing its own post:
+  //  - Fremen re-enter from the eastern dunes, beyond the cover line
+  //    (fremenCover reaches x=230, +<=20 de-confliction offsets), so the
+  //    walk-in starts at/off the right frame edge and is visibly a walk.
+  //  - Harkonnen re-enter from behind the harvester: the spawn point sits
+  //    in the hull's screen shadow (its sight line passes through the slab,
+  //    so the unit appears already occluded rather than popping onto open
+  //    sand), then the route swings west of the stern (-110,-254) and along
+  //    the NORTH flank to a rally point off the arc's north end. Waypoints
+  //    keep >=10 units clear of every leg foot pad (feet at local
+  //    (+-43, {-48,-6,36}) => world (-70,-223) (-31,-238) (9,-252) north /
+  //    (-100,-304) (-60,-318) (-21,-333) south) — a direct stern->south-post
+  //    line would pass under the hull between the legs.
+  reinforce: {
+    fremen: [[320, -262]],
+    hark: [[-180, -340], [-160, -215], [-5, -205]],
+  },
   // Bounding box explosions are scattered within — coordinates only, FX
   // (timing/pools/rendering) lives in combatfx.js.
   battlefield: { x: [-20, 220], z: [-330, -200] },

@@ -86,10 +86,13 @@ function createTracers() {
   const trailFrac = new Float32Array(TRACER_POOL);
   const active = new Uint8Array(TRACER_POOL);
   const impacted = new Uint8Array(TRACER_POOL);
+  // Task 5: which units[] index each in-flight tracer was aimed at, so the
+  // landing can be reported back to troops.reportImpact (the kill roll).
+  const targetIdx = new Int16Array(TRACER_POOL).fill(-1);
   let cursor = 0;
   const _color = new THREE.Color();
 
-  function spawn(sx, sy, sz, tx, ty, tz, elapsed, colorHex) {
+  function spawn(sx, sy, sz, tx, ty, tz, elapsed, colorHex, target) {
     const slot = cursor;
     cursor = (cursor + 1) % TRACER_POOL;
     srcX[slot] = sx; srcY[slot] = sy; srcZ[slot] = sz;
@@ -97,6 +100,7 @@ function createTracers() {
     startTime[slot] = elapsed;
     active[slot] = 1;
     impacted[slot] = 0;
+    targetIdx[slot] = target === undefined ? -1 : target;
     const dist = Math.hypot(tx - sx, ty - sy, tz - sz) || 1;
     trailFrac[slot] = Math.min(0.45, Math.max(0.06, TRACER_TRAIL_WORLD / dist));
     _color.set(colorHex);
@@ -119,7 +123,7 @@ function createTracers() {
       if (t >= 1) {
         if (!impacted[i]) {
           impacted[i] = 1;
-          onImpact(dstX[i], dstZ[i]);
+          onImpact(dstX[i], dstZ[i], targetIdx[i], elapsed);
         }
         active[i] = 0;
         const j = i * 2 * 3;
@@ -414,7 +418,12 @@ function createExplosionShells() {
 
 // ---- public factory ----
 
-export function createCombatFX(units) {
+// Task 5 contract: `reportImpact(unitIndex, elapsed)` is troops.js's kill
+// entry point — combatfx calls it whenever a tracer aimed at a unit lands.
+// Troops owns the kill roll and all resulting state; combatfx's only
+// attrition duties are (a) never fire FROM a non-alive unit and (b) never
+// target a non-alive unit.
+export function createCombatFX(units, reportImpact) {
   const group = new THREE.Group();
 
   const tracers = createTracers();
@@ -437,13 +446,22 @@ export function createCombatFX(units) {
   const lastShotK = units.map((_, i) => Math.floor((0 - shotPhase[i]) / cadence[i]));
   const shotCount = new Array(units.length).fill(0);
 
+  // Scratch roster of currently-alive opposing indices, refilled in place per
+  // shot (preallocated — zero per-frame allocations).
+  const aliveScratch = new Int16Array(units.length);
+
   function fireShot(shooterIdx, elapsed) {
     const unit = units[shooterIdx];
+    if (unit.alive === false) return; // contract: the dead don't shoot
     const opposing = unit.faction === 'fremen' ? harkIdx : fremenIdx;
-    if (opposing.length === 0) return;
+    let n = 0;
+    for (let k = 0; k < opposing.length; k++) {
+      if (units[opposing[k]].alive !== false) aliveScratch[n++] = opposing[k];
+    }
+    if (n === 0) return; // contract: never target the non-alive
     const seedBase = shooterIdx * 733 + shotCount[shooterIdx];
     shotCount[shooterIdx]++;
-    const targetSlot = opposing[Math.floor(seedFrac(seedBase, 81) * opposing.length)];
+    const targetSlot = aliveScratch[Math.min(n - 1, Math.floor(seedFrac(seedBase, 81) * n))];
     const target = units[targetSlot];
     const dx = (seedFrac(seedBase, 82) - 0.5) * 6; // +-3 spread
     const dz = (seedFrac(seedBase, 83) - 0.5) * 6;
@@ -453,7 +471,7 @@ export function createCombatFX(units) {
     const ty = target.pos.y + target.muzzleY;
     const color = unit.faction === 'fremen' ? COLORS.tracerFremen : COLORS.harkRed;
 
-    tracers.spawn(sx, sy, sz, tx, ty, tz, elapsed, color);
+    tracers.spawn(sx, sy, sz, tx, ty, tz, elapsed, color, targetSlot);
     flashes.spawn(sx, sy, sz, elapsed);
   }
 
@@ -473,8 +491,12 @@ export function createCombatFX(units) {
   // but a fresh arrow function every frame would violate the zero-per-frame-
   // allocation rule the rest of this file (and worm.js/harvester.js) follow.
   let impactSeed = 0;
-  function onTracerImpact(x, z) {
+  function onTracerImpact(x, z, unitIdx, elapsed) {
     puffs.spawnImpactDust(x, z, impactSeed++);
+    // Task 5: the tracer landed on (near) its target unit — hand the kill
+    // roll to troops. Only reachable via spawned tracers, so never under
+    // reduced motion (dt === 0 spawns nothing): the troops PRNG stays put.
+    if (reportImpact !== undefined && unitIdx >= 0) reportImpact(unitIdx, elapsed);
   }
 
   function triggerExplosion(slot, elapsed) {
