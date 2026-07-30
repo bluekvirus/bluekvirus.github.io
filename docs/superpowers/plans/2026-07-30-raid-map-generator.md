@@ -2161,6 +2161,11 @@ const POSE = {
 };
 
 export function seatFigure(root, skeleton) {
+  // If clones share one skeleton instance per model rather than each owning a
+  // copy, posing this figure would pose every character built from the same
+  // model. Task 10 reports which case holds; if they are shared, the hostage
+  // must be given its own skeleton before this runs, or use a model no other
+  // role uses.
   for (const [name, [x, y, z]] of Object.entries(POSE)) {
     const bone = skeleton.bones.find((b) => b.name === name);
     if (!bone) continue;
@@ -2230,9 +2235,12 @@ import { seatFigure, buildChair } from './seated.js';
 ```js
   // The hostage is posed rather than left standing, and the chair is sized to
   // where the pose actually put the hips and feet.
-  const seatedFigure = figures[figures.length - 1];
-  const hostageSkeleton = scene.skeletons[scene.skeletons.length - 1];
-  const metrics = seatFigure(seatedFigure.root, hostageSkeleton);
+  //
+  // Take the skeleton from the figure itself, not from `scene.skeletons`. An
+  // index into that array silently depends on load order, and would start
+  // posing the wrong character the moment the model set or import order changed.
+  const seated = figures.find((f) => f.role === 'hostage');
+  const metrics = seatFigure(seated.root, seated.skeleton);
   const chair = buildChair(scene, metrics, mission.spawns.hostage);
 ```
 
