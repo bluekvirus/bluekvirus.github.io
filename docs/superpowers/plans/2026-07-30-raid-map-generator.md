@@ -2161,11 +2161,14 @@ const POSE = {
 };
 
 export function seatFigure(root, skeleton) {
-  // If clones share one skeleton instance per model rather than each owning a
-  // copy, posing this figure would pose every character built from the same
-  // model. Task 10 reports which case holds; if they are shared, the hostage
-  // must be given its own skeleton before this runs, or use a model no other
-  // role uses.
+  // Measured in Task 10: cloning a root does NOT clone the skeleton, so the
+  // twelve figures share only three instances — one per model. Posing a SWAT
+  // would move all four of them.
+  //
+  // This is safe ONLY because the hostage is the sole user of Casual.glb and so
+  // owns its skeleton outright. Give any other role that model and this function
+  // will pose them too. If that ever changes, clone the skeleton for the hostage
+  // before posing rather than dropping this pose.
   for (const [name, [x, y, z]] of Object.entries(POSE)) {
     const bone = skeleton.bones.find((b) => b.name === name);
     if (!bone) continue;
