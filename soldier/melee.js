@@ -137,56 +137,78 @@ const GRIP = { rotDeg: [-90, -90, 0] };
 
 // Which bones the drawn hand hangs off, and how much of a vertex's weight has to
 // land on them before it counts as hand rather than forearm.
-const HAND_BONES = /^(Wrist|Thumb|Index|Middle|Ring|Pinky)\d*\.R$/;
-const HAND_WEIGHT = 0.6;
+const GRIP_BONES = /^(Wrist|Thumb|Index|Middle|Ring|Pinky)\d*\.R$/;
+const GRIP_WEIGHT = 0.6;
+
+// How far to slide the item along the finger axis after seating, in the grip
+// bone's units (~1.26 per metre, so this is a shade over 1.5cm).
+//
+// The hand's centre of mass is not its gripping point: the palm and the finger
+// ROOTS — which all sit back at `Middle1.R`, the wrist end — pull the centroid
+// towards the knuckle, leaving the item held by the very tip of its butt. This
+// slides it out to where the fingers actually close. Measured against the
+// alternatives: 0 puts the butt at the far edge of the fist, 0.056 pushes it
+// clean through and out the other side.
+const GRIP_SLIDE = 0.02;
 
 /**
- * Where the hand is actually drawn, in world space, for the pose on screen.
+ * Where the closed fingers are actually drawn, in world space, for the pose on
+ * screen — the middle of the tunnel a handle passes through.
  *
  * Not derivable from the bone joints: `Wrist.R` and `Middle1.R` are 2.8cm apart
  * and BOTH sit ~12cm above the rendered fist, so any blend of the two lands up
- * at the forearm. The only honest answer is the geometry — skin the vertices
- * weighted to the hand and take their centre.
+ * at the forearm. The only honest answer is the geometry.
  */
-function handCentre(skeleton, carrier) {
-  const pos = carrier.getVerticesData(BABYLON.VertexBuffer.PositionKind);
-  const idx = carrier.getVerticesData(BABYLON.VertexBuffer.MatricesIndicesKind);
-  const wts = carrier.getVerticesData(BABYLON.VertexBuffer.MatricesWeightsKind);
-  if (!pos || !idx || !wts) return null;
-
+function handCentre(skeleton, meshes) {
   const hand = new Set();
-  skeleton.bones.forEach((b, i) => { if (HAND_BONES.test(b.name)) hand.add(i); });
+  skeleton.bones.forEach((b, i) => { if (GRIP_BONES.test(b.name)) hand.add(i); });
   if (!hand.size) return null;
 
-  // Rebuild the bone matrix buffer first. Babylon only refreshes it for meshes
-  // that actually render, and a freshly imported figure can be culled on stale
-  // bounds for its first frames — leaving the buffer on the bind pose, which
-  // measures the open hand and seats the item out at the fingertips.
-  skeleton.prepare();
-  const bones = skeleton.getTransformMatrices(carrier);
-  const world = carrier.getWorldMatrix();
+  // Build the skinning matrices from the bones directly rather than reading
+  // `getTransformMatrices`. That buffer is only refreshed for meshes Babylon
+  // actually renders, and `prepare()` early-returns unless the skeleton is
+  // flagged dirty — so a freshly imported figure hands back the BIND pose, which
+  // measures an open hand and seats the item out past the fingertips. Whether
+  // that happened depended on frame timing, so the same build placed the item in
+  // two different spots run to run. Bone matrices are always current.
+  const bones = skeleton.bones.map(
+    (b) => b.getInvertedAbsoluteTransform().multiply(b.getFinalMatrix()),
+  );
   const blend = BABYLON.Matrix.FromValues(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
   const sum = new BABYLON.Vector3(0, 0, 0);
   let n = 0;
 
-  for (let v = 0; v < pos.length / 3; v++) {
-    let w = 0;
-    for (let k = 0; k < 4; k++) if (hand.has(idx[v * 4 + k])) w += wts[v * 4 + k];
-    if (w < HAND_WEIGHT) continue;
+  // Every mesh sharing the skeleton, not just one. The pack splits each figure
+  // into a primitive per material, and the hand does not reliably land in the
+  // first of them — on the Farmer it sits in the fourth, while the first holds a
+  // 30-vertex scrap of sleeve. Measuring whichever came first put that character's
+  // grip point in a different place from everyone else's.
+  for (const mesh of meshes) {
+    const pos = mesh.getVerticesData(BABYLON.VertexBuffer.PositionKind);
+    const idx = mesh.getVerticesData(BABYLON.VertexBuffer.MatricesIndicesKind);
+    const wts = mesh.getVerticesData(BABYLON.VertexBuffer.MatricesWeightsKind);
+    if (!pos || !idx || !wts) continue;
+    const world = mesh.getWorldMatrix();
 
-    // Linear blend skinning, the same sum the GPU performs.
-    for (let e = 0; e < 16; e++) blend.m[e] = 0;
-    for (let k = 0; k < 4; k++) {
-      const bw = wts[v * 4 + k];
-      if (!bw) continue;
-      const off = idx[v * 4 + k] * 16;
-      for (let e = 0; e < 16; e++) blend.m[e] += bones[off + e] * bw;
+    for (let v = 0; v < pos.length / 3; v++) {
+      let w = 0;
+      for (let k = 0; k < 4; k++) if (hand.has(idx[v * 4 + k])) w += wts[v * 4 + k];
+      if (w < GRIP_WEIGHT) continue;
+
+      // Linear blend skinning, the same sum the GPU performs.
+      for (let e = 0; e < 16; e++) blend.m[e] = 0;
+      for (let k = 0; k < 4; k++) {
+        const bw = wts[v * 4 + k];
+        if (!bw) continue;
+        const src = bones[idx[v * 4 + k]].m;
+        for (let e = 0; e < 16; e++) blend.m[e] += src[e] * bw;
+      }
+      blend.markAsUpdated();
+      const local = new BABYLON.Vector3(pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]);
+      sum.addInPlace(BABYLON.Vector3.TransformCoordinates(
+        BABYLON.Vector3.TransformCoordinates(local, blend), world));
+      n++;
     }
-    blend.markAsUpdated();
-    const local = new BABYLON.Vector3(pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]);
-    sum.addInPlace(BABYLON.Vector3.TransformCoordinates(
-      BABYLON.Vector3.TransformCoordinates(local, blend), world));
-    n++;
   }
   return n ? sum.scale(1 / n) : null;
 }
@@ -198,11 +220,19 @@ function handCentre(skeleton, carrier) {
 export function createMelee(scene, loaded) {
   const skeleton = loaded.skeletons[0];
   const bone = skeleton?.bones.find((b) => b.name === GRIP_BONE);
-  // Must be the mesh that carries the vertices, not just any node bound to the
-  // skeleton — `handCentre` reads its skin weights.
-  const carrier = loaded.meshes.find(
-    (m) => m.skeleton === skeleton && m.getTotalVertices() > 0,
+  // All the meshes carrying vertices, not just any node bound to the skeleton —
+  // `handCentre` reads their skin weights, and the hand may live in any of them.
+  //
+  // The pistol is excluded: it is skinned to the hand bones too, so on the two
+  // characters that carry one it counted as hand geometry and pulled the grip
+  // point out towards the barrel, seating their melee items differently from
+  // everyone else's.
+  const skinned = loaded.meshes.filter(
+    (m) => m.skeleton === skeleton
+      && m.getTotalVertices() > 0
+      && !m.name.startsWith('Pistol'),
   );
+  const carrier = skinned[0];
   if (!bone || !carrier) return null;
 
   const rig = new BABYLON.TransformNode('heldItemRig', scene);
@@ -225,7 +255,7 @@ export function createMelee(scene, loaded) {
    * centre. The rig-local displacement is measured rather than derived — see the
    * note above on this rig's mirrored bone bases.
    */
-  const seatInFist = () => {
+  const seatInFist = (measured) => {
     if (!parts.length) return;
 
     let lowest = Infinity;
@@ -237,7 +267,7 @@ export function createMelee(scene, loaded) {
     }
     if (Number.isFinite(lowest)) for (const m of parts) m.position.y -= lowest;
 
-    const target = handCentre(skeleton, carrier);
+    const target = measured ?? handCentre(skeleton, skinned);
     if (!target) return;
 
     const base = rig.position.clone();
@@ -265,6 +295,8 @@ export function createMelee(scene, loaded) {
       const sub = (c) => J.map((row, i) => row.map((v, j) => (j === c ? rhs[i] : v)));
       rig.position.set(base.x + det(sub(0)) / D, base.y + det(sub(1)) / D, base.z + det(sub(2)) / D);
     }
+    // Out from the hand's centre of mass to where the fingers close on it.
+    rig.position.y += GRIP_SLIDE;
     rig.computeWorldMatrix(true);
   };
 
@@ -274,6 +306,38 @@ export function createMelee(scene, loaded) {
   // time would read the bind pose — fingers straight, hand centre out at the
   // fingertips — instead of the closed fist the melee clips actually pose.
   let seated = false;
+
+  /**
+   * Seat once the clip is actually driving the skeleton, keeping the item hidden
+   * until then rather than showing it in the wrong place for a frame.
+   *
+   * Starting an AnimationGroup does not pose the bones — that happens on a later
+   * frame, and exactly which one varies, so a fixed wait seated against the bind
+   * pose on some loads and the real pose on others. Instead, wait for the
+   * measurement to hold still: once posed it is steady to well under a
+   * millimetre, while the bind-to-posed jump is thirty times that. The bind pose
+   * is stable too, so stability alone would not tell them apart — hence also
+   * requiring a few frames to have gone by first.
+   */
+  const seatWhenPosed = () => {
+    for (const p of parts) p.setEnabled(false);
+    let prev = null;
+    let frames = 0;
+    const obs = scene.onAfterRenderObservable.add(() => {
+      const stop = () => scene.onAfterRenderObservable.remove(obs);
+      if (!api.visible || seated) return stop();
+      const centre = handCentre(skeleton, skinned);
+      if (!centre) return stop();
+      frames++;
+      if (frames > 2 && prev && BABYLON.Vector3.Distance(prev, centre) < 0.001) {
+        seatInFist(centre);
+        seated = true;
+        for (const p of parts) p.setEnabled(true);
+        return stop();
+      }
+      prev = centre;
+    });
+  };
 
   const api = {
     rig,
@@ -293,20 +357,7 @@ export function createMelee(scene, loaded) {
     visible: false,
     setVisible(on) {
       api.visible = on;
-      // Starting a clip does not pose the skeleton — the bones still hold the
-      // previous pose until the next render. Seating before that measures the
-      // bind pose, so wait one frame and keep the item hidden meanwhile rather
-      // than showing it at the wrong spot.
-      if (on && !seated) {
-        for (const p of parts) p.setEnabled(false);
-        scene.onAfterRenderObservable.addOnce(() => {
-          if (!api.visible) return;
-          seatInFist();
-          seated = true;
-          for (const p of parts) p.setEnabled(true);
-        });
-        return;
-      }
+      if (on && !seated) { seatWhenPosed(); return; }
       for (const p of parts) p.setEnabled(on);
     },
     dispose() {
