@@ -82,3 +82,74 @@ test('overrides are honoured', () => {
 test('defaults are frozen so a caller cannot corrupt later generations', () => {
   assert.throws(() => { FLOORPLAN_DEFAULTS.width = 1; });
 });
+
+test('every cell is reachable from cell 0', () => {
+  for (const seed of SEEDS) {
+    const { cells, adjacency } = generateFloorplan(seed);
+    const seen = new Set([cells[0].id]);
+    const queue = [cells[0].id];
+    while (queue.length) {
+      for (const n of adjacency[queue.pop()] ?? []) {
+        if (!seen.has(n)) { seen.add(n); queue.push(n); }
+      }
+    }
+    assert.equal(seen.size, cells.length,
+      `${seed}: ${cells.length - seen.size} of ${cells.length} cells unreachable`);
+  }
+});
+
+test('adjacency is symmetric', () => {
+  for (const seed of SEEDS.slice(0, 50)) {
+    const { cells, adjacency } = generateFloorplan(seed);
+    for (const c of cells) {
+      for (const n of adjacency[c.id]) {
+        assert.ok(adjacency[n].includes(c.id), `${seed}: ${c.id}->${n} not mirrored`);
+      }
+    }
+  }
+});
+
+test('each door joins two cells that really touch', () => {
+  for (const seed of SEEDS.slice(0, 50)) {
+    const { cells, doors } = generateFloorplan(seed);
+    const byId = new Map(cells.map((c) => [c.id, c]));
+    for (const door of doors) {
+      const a = byId.get(door.a);
+      const b = byId.get(door.b);
+      const touching = door.axis === 'x'
+        ? Math.abs((a.z + a.d) - b.z) < 1e-6 || Math.abs((b.z + b.d) - a.z) < 1e-6
+        : Math.abs((a.x + a.w) - b.x) < 1e-6 || Math.abs((b.x + b.w) - a.x) < 1e-6;
+      assert.ok(touching, `${seed}: door ${door.id} joins cells that do not share an edge`);
+    }
+  }
+});
+
+test('doors keep clear of corners', () => {
+  for (const seed of SEEDS.slice(0, 50)) {
+    const { cells, doors, config } = generateFloorplan(seed);
+    const byId = new Map(cells.map((c) => [c.id, c]));
+    const clearance = config.doorWidth / 2 + config.doorMargin;
+    for (const door of doors) {
+      for (const cell of [byId.get(door.a), byId.get(door.b)]) {
+        if (door.axis === 'x') {
+          assert.ok(door.x >= cell.x + clearance - 1e-6 && door.x <= cell.x + cell.w - clearance + 1e-6,
+            `${seed}: door ${door.id} is too near a corner of cell ${cell.id}`);
+        } else {
+          assert.ok(door.z >= cell.z + clearance - 1e-6 && door.z <= cell.z + cell.d - clearance + 1e-6,
+            `${seed}: door ${door.id} is too near a corner of cell ${cell.id}`);
+        }
+      }
+    }
+  }
+});
+
+test('there is exactly one door per adjacent pair', () => {
+  for (const seed of SEEDS.slice(0, 50)) {
+    const { doors, adjacency } = generateFloorplan(seed);
+    const pairs = new Set(doors.map((d) => `${Math.min(d.a, d.b)}-${Math.max(d.a, d.b)}`));
+    assert.equal(pairs.size, doors.length, `${seed}: duplicate door between a pair`);
+    const edges = Object.entries(adjacency)
+      .flatMap(([a, ns]) => ns.map((b) => `${Math.min(+a, b)}-${Math.max(+a, b)}`));
+    assert.equal(new Set(edges).size, doors.length, `${seed}: adjacency and doors disagree`);
+  }
+});

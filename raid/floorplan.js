@@ -29,6 +29,59 @@ function canSplit(rect, axis, band, cfg) {
   return span >= cfg.minRoomSide * 2 + band;
 }
 
+/**
+ * How far two cells overlap along the shared edge, and where that overlap sits.
+ * Returns null when they do not touch, or touch too briefly to fit a door.
+ *
+ * Adjacency is measured geometrically rather than read off the BSP tree: once a
+ * corridor band is carved between two children they are no longer neighbours,
+ * and cells on opposite sides of a corridor must not get a door through it.
+ */
+function sharedEdge(a, b, cfg) {
+  const need = cfg.doorWidth + cfg.doorMargin * 2;
+  const near = 1e-6;
+
+  const touchZ = Math.abs((a.z + a.d) - b.z) < near || Math.abs((b.z + b.d) - a.z) < near;
+  if (touchZ) {
+    const lo = Math.max(a.x, b.x);
+    const hi = Math.min(a.x + a.w, b.x + b.w);
+    if (hi - lo >= need) {
+      return { axis: 'x', lo, hi, at: Math.abs((a.z + a.d) - b.z) < near ? a.z + a.d : b.z + b.d };
+    }
+  }
+
+  const touchX = Math.abs((a.x + a.w) - b.x) < near || Math.abs((b.x + b.w) - a.x) < near;
+  if (touchX) {
+    const lo = Math.max(a.z, b.z);
+    const hi = Math.min(a.z + a.d, b.z + b.d);
+    if (hi - lo >= need) {
+      return { axis: 'z', lo, hi, at: Math.abs((a.x + a.w) - b.x) < near ? a.x + a.w : b.x + b.w };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Every cell must be reachable. BSP tiles the footprint with no gaps, so a
+ * disconnected plan means the splitter produced a cell too thin along a shared
+ * edge to take a door. That is a bug in the split rules, not an unlucky seed, so
+ * it throws rather than quietly regenerating and hiding the cause.
+ */
+function assertConnected(plan) {
+  const seen = new Set([plan.cells[0].id]);
+  const queue = [plan.cells[0].id];
+  while (queue.length) {
+    for (const n of plan.adjacency[queue.pop()]) {
+      if (!seen.has(n)) { seen.add(n); queue.push(n); }
+    }
+  }
+  if (seen.size !== plan.cells.length) {
+    const lost = plan.cells.filter((c) => !seen.has(c.id)).map((c) => c.id);
+    throw new Error(`floorplan "${plan.seed}": cells ${lost.join(', ')} unreachable`);
+  }
+}
+
 export function generateFloorplan(seed, overrides = {}) {
   const config = { ...FLOORPLAN_DEFAULTS, ...overrides };
   const rng = makeRng(seed);
@@ -105,5 +158,36 @@ export function generateFloorplan(seed, overrides = {}) {
     ...corridors.map((r) => ({ ...toRect(r), kind: 'corridor' })),
   ].map((c, id) => ({ id, ...c }));
 
-  return { seed, config, bounds, cells };
+  const adjacency = Object.fromEntries(cells.map((c) => [c.id, []]));
+  const doors = [];
+
+  for (let i = 0; i < cells.length; i++) {
+    for (let j = i + 1; j < cells.length; j++) {
+      const edge = sharedEdge(cells[i], cells[j], config);
+      if (!edge) continue;
+
+      adjacency[cells[i].id].push(cells[j].id);
+      adjacency[cells[j].id].push(cells[i].id);
+
+      // Centre the door on the shared span, then pull it inside the corner
+      // clearance at both ends. `sharedEdge` guarantees the span is wide enough
+      // for that to be possible.
+      const clearance = config.doorWidth / 2 + config.doorMargin;
+      const centre = Math.min(edge.hi - clearance, Math.max(edge.lo + clearance, (edge.lo + edge.hi) / 2));
+
+      doors.push({
+        id: doors.length,
+        a: cells[i].id,
+        b: cells[j].id,
+        axis: edge.axis,
+        width: config.doorWidth,
+        x: edge.axis === 'x' ? centre : edge.at,
+        z: edge.axis === 'x' ? edge.at : centre,
+      });
+    }
+  }
+
+  const plan = { seed, config, bounds, cells, adjacency, doors };
+  assertConnected(plan);
+  return plan;
 }
