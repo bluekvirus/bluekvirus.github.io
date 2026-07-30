@@ -140,16 +140,23 @@ const GRIP = { rotDeg: [-90, -90, 0] };
 const GRIP_BONES = /^(Wrist|Thumb|Index|Middle|Ring|Pinky)\d*\.R$/;
 const GRIP_WEIGHT = 0.6;
 
-// How far to slide the item along the finger axis after seating, in the grip
-// bone's units (~1.26 per metre, so this is a shade over 1.5cm).
+// Where the item sits relative to the measured hand centre, in the grip bone's
+// units (~1.26 per metre, so 0.01 is a little under 8mm).
 //
 // The hand's centre of mass is not its gripping point: the palm and the finger
 // ROOTS — which all sit back at `Middle1.R`, the wrist end — pull the centroid
 // towards the knuckle, leaving the item held by the very tip of its butt. This
-// slides it out to where the fingers actually close. Measured against the
-// alternatives: 0 puts the butt at the far edge of the fist, 0.056 pushes it
-// clean through and out the other side.
-const GRIP_SLIDE = 0.02;
+// nudges it out to where the fingers actually close.
+//
+// The axes are measured, not assumed. `alongShaft` runs down the item itself —
+// the bone's x axis, verified at a dot of -1 against the bat's own long axis —
+// so NEGATIVE slides the item towards its tip and leaves more butt behind the
+// hand. That is what puts the fist around the middle of the handle instead of
+// clamped on its very end. `alongFingers` runs from the wrist out to the
+// fingertips, reading as down the arm on screen at ~290px per unit against a
+// fist only 33px long, so small numbers move a lot. `throughPalm` crosses from
+// the back of the hand towards the curled fingers.
+const GRIP_OFFSET = { alongShaft: -0.03, alongFingers: 0.013, throughPalm: 0 };
 
 /**
  * Where the closed fingers are actually drawn, in world space, for the pose on
@@ -296,7 +303,9 @@ export function createMelee(scene, loaded) {
       rig.position.set(base.x + det(sub(0)) / D, base.y + det(sub(1)) / D, base.z + det(sub(2)) / D);
     }
     // Out from the hand's centre of mass to where the fingers close on it.
-    rig.position.y += GRIP_SLIDE;
+    rig.position.x += GRIP_OFFSET.alongShaft;
+    rig.position.y += GRIP_OFFSET.alongFingers;
+    rig.position.z += GRIP_OFFSET.throughPalm;
     rig.computeWorldMatrix(true);
   };
 
