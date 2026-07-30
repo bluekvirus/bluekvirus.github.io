@@ -154,12 +154,10 @@ const GRIP_WEIGHT = 0.6;
 // hand. That is what puts the fist around the middle of the handle instead of
 // clamped on its very end. `alongFingers` runs from the wrist out to the
 // fingertips, reading as down the arm on screen at ~290px per unit against a
-// fist only 33px long, so small numbers move a lot. `throughPalm` seats the
-// handle down into the fist rather than letting it hang off the fingers;
-// POSITIVE is deeper, established by rendering it rather than by reasoning from
-// the bone axes, which point the opposite way to how the grip reads. Past about
-// 0.04 the bat's knob vanishes behind the fingers and the hold stops reading.
-const GRIP_OFFSET = { alongShaft: -0.03, alongFingers: 0.013, throughPalm: 0.028 };
+// fist only 33px long, so small numbers move a lot. `throughPalm` shifts the
+// handle sideways off the axis of the hand; it is deliberately 0 — depth is a
+// slide along the weapon itself, not a shove across the palm.
+const GRIP_OFFSET = { alongShaft: -0.08, alongFingers: 0.013, throughPalm: 0 };
 
 /**
  * Where the closed fingers are actually drawn, in world space, for the pose on
