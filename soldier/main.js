@@ -55,16 +55,10 @@ function play(name) {
   current = group;
   wantedClip = name;
   // Hands follow the clip: pistol for gun clips, melee item for sword clips.
-  const wantGun = GUN_CLIPS.has(name) && !!figure?.meta.armed;
-  const wantMelee = MELEE_CLIPS.has(name);
-  figure?.weapon.setDrawn(wantGun && figure.weapon.meshes.length > 0);
-  // Characters whose mesh ships no pistol borrow the procedural one, held in
-  // the same hand rig as the melee items.
-  if (figure?.melee) {
-    const needsStandIn = wantGun && figure.weapon.meshes.length === 0;
-    figure.melee.setItem(needsStandIn ? 'pistol' : (wantMelee ? meleeKind : figure.melee.kind));
-    figure.melee.setVisible(needsStandIn || wantMelee);
-  }
+  // Hands follow the clip: the character's own pistol for gun clips, the
+  // selected melee item for sword clips.
+  figure?.weapon.setDrawn(GUN_CLIPS.has(name) && !!figure.meta.armed);
+  figure?.melee?.setVisible(MELEE_CLIPS.has(name));
   for (const el of clipBar.children) el.classList.toggle('on', el.dataset.clip === name);
   return true;
 }

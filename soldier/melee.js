@@ -109,38 +109,7 @@ function pipe(scene, root) {
   return parts;
 }
 
-/** Compact sidearm, for characters whose mesh doesn't ship one. */
-function pistol(scene, root) {
-  const dark = mat(scene, 'holdPistolDark', '#2a2c31');
-  const steel = mat(scene, 'holdPistolSteel', '#4a4e55', { spec: '#6e7681', specPower: 40 });
-  const parts = [];
-
-  // Authored around the same grip origin as the melee items: the butt sits in
-  // the palm and the weapon runs along +Y, so it reuses the solved transform.
-  const butt = BABYLON.MeshBuilder.CreateBox('pistolGrip',
-    { width: 0.032, height: 0.105, depth: 0.052 }, scene);
-  butt.position.set(0, 0.035, -0.012);
-  butt.rotation.x = -12 * DEG;
-  butt.material = dark;
-  parts.push(butt);
-
-  const frame = BABYLON.MeshBuilder.CreateBox('pistolFrame',
-    { width: 0.030, height: 0.055, depth: 0.150 }, scene);
-  frame.position.set(0, 0.108, 0.040);
-  frame.material = steel;
-  parts.push(frame);
-
-  const slide = BABYLON.MeshBuilder.CreateBox('pistolSlide',
-    { width: 0.028, height: 0.026, depth: 0.070 }, scene);
-  slide.position.set(0, 0.140, 0.070);
-  slide.material = dark;
-  parts.push(slide);
-
-  for (const p of parts) p.parent = root;
-  return parts;
-}
-
-const BUILDERS = { bat, knife, pipe, pistol };
+const BUILDERS = { bat, knife, pipe };
 
 export const MELEE_ITEMS = [
   { id: 'none', label: 'Empty' },
@@ -152,24 +121,24 @@ export const MELEE_ITEMS = [
 /** Clips the melee item should appear for. */
 export const MELEE_CLIPS = new Set(['Idle_Sword', 'Sword_Slash']);
 
-// How a held item sits in the right hand. Two transforms, because a pistol and
-// a bat are gripped differently:
+// How a held item sits in the right hand.
 //
-//   MELEE — the shaft runs THROUGH the fist, perpendicular to the direction the
-//     fingers point. Verified: the shaft's dot with the finger axis is 0.03,
-//     i.e. square to it, while heading forward past the knuckles.
-//   GUN — the barrel points where the fist points, so the weapon aims down the
-//     arm rather than out of the top of the hand. Scores 0.998 against the aim
-//     axis, matching how SWAT's and Suit's built-in pistols sit.
+// The shaft runs THROUGH the fist, square to where the fingers point — a bat
+// aligned WITH the fingers reads as an extension of the arm, not a grip.
+// Verified at a dot of 0.03 against the finger axis while heading forward past
+// the knuckles.
 //
-// Both were found by sweeping axis-aligned turns and scoring them against the
-// hand's own axes, not by reasoning: the importer leaves the bone bases
-// mirrored, so angles authored by hand in that space mean nothing. The pack
-// shares one skeleton, so these hold for every character.
+// Found by sweeping axis-aligned turns and scoring them against the hand's
+// measured axes, not by reasoning: the importer leaves the bone bases mirrored,
+// so angles authored by hand in that space don't mean what they look like. The
+// pack shares one skeleton, so this holds for every character.
 const GRIP_BONE = 'Middle1.R';
-const GRIP_MELEE = { pos: [0, 0, 0], rotDeg: [-90, -90, 0] };
-const GRIP_GUN = { pos: [0, 0, 0], rotDeg: [-90, -90, -90] };
-const GRIP_FOR = (kind) => (kind === 'pistol' ? GRIP_GUN : GRIP_MELEE);
+const GRIP = { rotDeg: [-90, -90, 0] };
+
+// The fist closes between the wrist and the knuckle bone, so the hand's real
+// centre is the midpoint of the two — the knuckle alone sits at the far edge of
+// the grip and leaves the weapon protruding backwards out of the hand.
+const FIST_BLEND = 0.5;
 
 /**
  * Build the melee rig. One node on the hand; items are created into it on
@@ -184,19 +153,68 @@ export function createMelee(scene, loaded) {
   const rig = new BABYLON.TransformNode('heldItemRig', scene);
   rig.attachToBone(bone, carrier);
 
-  const applyGrip = (kind) => {
-    const g = GRIP_FOR(kind);
-    rig.position.fromArray(g.pos);
-    rig.rotationQuaternion = BABYLON.Quaternion.FromEulerAngles(
-      g.rotDeg[0] * DEG, g.rotDeg[1] * DEG, g.rotDeg[2] * DEG,
-    );
-    // Cancel the importer's mirror so the item isn't rendered inside-out.
-    rig.scaling.setAll(1);
+  rig.rotationQuaternion = BABYLON.Quaternion.FromEulerAngles(
+    GRIP.rotDeg[0] * DEG, GRIP.rotDeg[1] * DEG, GRIP.rotDeg[2] * DEG,
+  );
+  // Cancel the importer's mirror so the item isn't rendered inside-out.
+  rig.computeWorldMatrix(true);
+  if (rig.getWorldMatrix().determinant() < 0) rig.scaling.set(1, -1, 1);
+  rig.computeWorldMatrix(true);
+
+  const wristBone = skeleton.bones.find((b) => b.name === 'Wrist.R');
+
+  /**
+   * Sit the butt of the item in the middle of the fist.
+   *
+   * Two steps: shift the geometry along its own axis so its lowest point is the
+   * grip origin (items are authored from roughly zero, but a bat's knob dips
+   * below it), then move the rig so that origin lands at the fist centre. The
+   * rig-local displacement is measured rather than derived — see the note above
+   * on this rig's mirrored bone bases.
+   */
+  const seatInFist = () => {
+    if (!parts.length || !wristBone) return;
+
+    let lowest = Infinity;
+    for (const m of parts) {
+      m.computeWorldMatrix(true);
+      m.refreshBoundingInfo();
+      const b = m.getBoundingInfo().boundingBox;
+      lowest = Math.min(lowest, b.minimum.y + m.position.y);
+    }
+    if (Number.isFinite(lowest)) for (const m of parts) m.position.y -= lowest;
+
+    const wrist = wristBone.getAbsolutePosition(carrier);
+    const knuckle = bone.getAbsolutePosition(carrier);
+    const target = BABYLON.Vector3.Lerp(wrist, knuckle, FIST_BLEND);
+
+    const base = rig.position.clone();
     rig.computeWorldMatrix(true);
-    if (rig.getWorldMatrix().determinant() < 0) rig.scaling.set(1, -1, 1);
+    const p0 = rig.getAbsolutePosition().clone();
+    const J = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    const eps = 0.01;
+    const ax = ['x', 'y', 'z'];
+    for (let a = 0; a < 3; a++) {
+      rig.position.copyFrom(base);
+      rig.position[ax[a]] += eps;
+      rig.computeWorldMatrix(true);
+      const p = rig.getAbsolutePosition();
+      J[0][a] = (p.x - p0.x) / eps;
+      J[1][a] = (p.y - p0.y) / eps;
+      J[2][a] = (p.z - p0.z) / eps;
+    }
+    rig.position.copyFrom(base);
+    const det = (m) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+      - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+      + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    const D = det(J);
+    if (Math.abs(D) > 1e-9) {
+      const rhs = [target.x - p0.x, target.y - p0.y, target.z - p0.z];
+      const sub = (c) => J.map((row, i) => row.map((v, j) => (j === c ? rhs[i] : v)));
+      rig.position.set(base.x + det(sub(0)) / D, base.y + det(sub(1)) / D, base.z + det(sub(2)) / D);
+    }
     rig.computeWorldMatrix(true);
   };
-  applyGrip('bat');
 
   let kind = 'none';
   let parts = [];
@@ -211,9 +229,9 @@ export function createMelee(scene, loaded) {
       for (const p of parts) p.dispose();
       parts = [];
       kind = next;
-      applyGrip(next);
       const build = BUILDERS[next];
       if (build) parts = build(scene, rig);
+      seatInFist();
       api.setVisible(api.visible);
     },
     visible: false,
