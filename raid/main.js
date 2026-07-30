@@ -1,6 +1,7 @@
 import { createStage } from './stage.js';
 import { generateFloorplan } from './floorplan.js';
 import { assignRoles } from './roles.js';
+import { buildLevel } from './build.js';
 
 const canvas = document.getElementById('view');
 const engine = new BABYLON.Engine(canvas, true, { antialias: true, stencil: false });
@@ -17,6 +18,7 @@ if (params.get('seed')) seedInput.value = params.get('seed');
 
 let plan = null;
 let mission = null;
+let level = null;
 
 function regenerate(seed = seedInput.value) {
   seedInput.value = seed;
@@ -25,6 +27,12 @@ function regenerate(seed = seedInput.value) {
   const started = performance.now();
   plan = generateFloorplan(seed, { targetRooms });
   mission = assignRoles(plan);
+
+  // Tear the previous build down first. Rebuilding over the top leaks a whole
+  // level's meshes and materials on every click of Regenerate.
+  level?.dispose();
+  level = buildLevel(scene, plan, mission, stage.shadows);
+
   const elapsed = performance.now() - started;
 
   stage.frameOn(plan.bounds);
