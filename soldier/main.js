@@ -3,6 +3,7 @@ import { createReloadClip } from './reload.js';
 import { createWeapon, GUN_CLIPS } from './weapon.js';
 import { CHARACTERS, DEFAULT_CHARACTER, byId } from './characters.js';
 import { createMelee, MELEE_ITEMS, MELEE_CLIPS } from './melee.js';
+import { loadSidearm, cloneSidearm } from './sidearm.js';
 
 const ASSET_DIR = './assets/quaternius/';
 
@@ -104,6 +105,7 @@ function disposeFigure() {
   for (const m of figure.loaded.meshes.slice()) m.dispose(false, true);
   for (const s of figure.loaded.skeletons.slice()) s.dispose();
   figure.melee?.dispose();
+  figure.weapon?.dispose();
   figure.root.dispose();
   figure = null;
   current = null;
@@ -140,7 +142,15 @@ async function loadCharacter(id) {
   }
   for (const m of drawable) stage.shadows.addShadowCaster(m);
 
-  const weapon = createWeapon(loaded);
+  // Characters without their own pistol borrow one, so every figure can use the
+  // gun clips rather than only the two the pack happens to arm.
+  const native = loaded.meshes.some((m) => m.name.startsWith('Pistol'));
+  if (!native) await loadSidearm(scene, ASSET_DIR);
+  // The template import is another await, so the race has to be re-checked.
+  if (token !== loadToken) return;
+  const loaned = native ? [] : cloneSidearm(loaded, root);
+  for (const m of loaned) stage.shadows.addShadowCaster(m);
+  const weapon = createWeapon(loaded, loaned);
   const melee = createMelee(scene, loaded);
   melee?.setItem(meleeKind);
   // Measure without the pistol so a drawn weapon held at arm's length can't

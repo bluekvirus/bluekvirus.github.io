@@ -21,8 +21,11 @@ export const GUN_CLIPS = new Set([
  * @param {object} loaded - the ImportMeshAsync result
  * @returns {{ setDrawn(boolean): void, drawn: boolean, meshes: BABYLON.AbstractMesh[] }}
  */
-export function createWeapon(loaded) {
-  const held = loaded.meshes.filter((m) => m.name.startsWith('Pistol'));
+export function createWeapon(loaded, loaned = []) {
+  // Either the character's own pistol, or a clone lent to it by `sidearm.js`.
+  // Only the loaned ones are ours to dispose; the native meshes belong to the
+  // figure's import and are torn down with it.
+  const held = [...loaded.meshes.filter((m) => m.name.startsWith('Pistol')), ...loaned];
 
   const api = {
     drawn: true,
@@ -32,6 +35,9 @@ export function createWeapon(loaded) {
       for (const m of held) m.setEnabled(drawn);
     },
     meshes: held,
+    dispose() {
+      for (const m of loaned) m.dispose(false, false);
+    },
   };
 
   api.setDrawn(false); // start empty-handed; the caller picks a clip next
