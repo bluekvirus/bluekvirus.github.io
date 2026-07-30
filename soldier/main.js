@@ -2,6 +2,7 @@ import { createStage, attachTurntable, standOnBase } from './stage.js';
 import { createReloadClip } from './reload.js';
 import { createWeapon, GUN_CLIPS } from './weapon.js';
 import { CHARACTERS, DEFAULT_CHARACTER, byId } from './characters.js';
+import { createMelee, MELEE_ITEMS, MELEE_CLIPS } from './melee.js';
 
 const ASSET_DIR = './assets/quaternius/';
 
@@ -22,6 +23,8 @@ const STAGES = [
   { label: 'Roll', clip: 'Roll' },
   { label: 'Take hit', clip: 'HitRecieve' },
   { label: 'Death', clip: 'Death' },
+  { label: 'Melee ready', clip: 'Idle_Sword' },
+  { label: 'Slash', clip: 'Sword_Slash' },
 ];
 
 const canvas = document.getElementById('view');
@@ -33,6 +36,7 @@ const params = new URLSearchParams(location.search);
 
 const clipBar = document.getElementById('clips');
 const castBar = document.getElementById('cast');
+const gearBar = document.getElementById('gear');
 const countEl = document.getElementById('count');
 
 // Everything belonging to the character currently on the plinth. Swapping
@@ -41,6 +45,7 @@ const countEl = document.getElementById('count');
 let figure = null;
 let current = null; // active AnimationGroup
 let wantedClip = params.get('clip') || 'Idle';
+let meleeKind = params.get('melee') || 'bat';
 
 function play(name) {
   const group = scene.animationGroups.find((g) => g.name === name);
@@ -49,8 +54,17 @@ function play(name) {
   group.start(true, 1.0, group.from, group.to, false);
   current = group;
   wantedClip = name;
-  // The pistol is welded to the hand by the rig; show it only for gun clips.
-  figure?.weapon.setDrawn(GUN_CLIPS.has(name));
+  // Hands follow the clip: pistol for gun clips, melee item for sword clips.
+  const wantGun = GUN_CLIPS.has(name) && !!figure?.meta.armed;
+  const wantMelee = MELEE_CLIPS.has(name);
+  figure?.weapon.setDrawn(wantGun && figure.weapon.meshes.length > 0);
+  // Characters whose mesh ships no pistol borrow the procedural one, held in
+  // the same hand rig as the melee items.
+  if (figure?.melee) {
+    const needsStandIn = wantGun && figure.weapon.meshes.length === 0;
+    figure.melee.setItem(needsStandIn ? 'pistol' : (wantMelee ? meleeKind : figure.melee.kind));
+    figure.melee.setVisible(needsStandIn || wantMelee);
+  }
   for (const el of clipBar.children) el.classList.toggle('on', el.dataset.clip === name);
   return true;
 }
@@ -64,17 +78,26 @@ function addClipButton(label, clip, extra = false) {
   clipBar.appendChild(b);
 }
 
+// Gun clips are listed only for characters who carry a firearm — a farmer
+// miming a pistol he doesn't hold reads as a bug, not a feature.
+const isGunClip = (name) => GUN_CLIPS.has(name) || /gun|shoot/i.test(name);
+
 function buildClipBar() {
   clipBar.textContent = '';
+  const armed = !!figure?.meta.armed;
+  const allowed = (name) => armed || !isGunClip(name);
   const mapped = new Set();
   for (const s of STAGES) {
+    if (!allowed(s.clip)) continue;
     if (scene.animationGroups.some((g) => g.name === s.clip)) {
       addClipButton(s.label, s.clip);
       mapped.add(s.clip);
     }
   }
   for (const g of scene.animationGroups) {
-    if (!mapped.has(g.name)) addClipButton(g.name.replace(/_/g, ' '), g.name, true);
+    if (!mapped.has(g.name) && allowed(g.name)) {
+      addClipButton(g.name.replace(/_/g, ' '), g.name, true);
+    }
   }
 }
 
@@ -86,6 +109,7 @@ function disposeFigure() {
   for (const g of scene.animationGroups.slice()) g.dispose();
   for (const m of figure.loaded.meshes.slice()) m.dispose(false, true);
   for (const s of figure.loaded.skeletons.slice()) s.dispose();
+  figure.melee?.dispose();
   figure.root.dispose();
   figure = null;
   current = null;
@@ -123,18 +147,36 @@ async function loadCharacter(id) {
   for (const m of drawable) stage.shadows.addShadowCaster(m);
 
   const weapon = createWeapon(loaded);
+  const melee = createMelee(scene, loaded);
+  melee?.setItem(meleeKind);
   // Measure without the pistol so a drawn weapon held at arm's length can't
   // drag the figure off the plinth.
   standOnBase(root, drawable.filter((m) => !m.name.startsWith('Pistol')), 0.06);
 
-  figure = { meta, loaded, root, weapon };
+  figure = { meta, loaded, root, weapon, melee };
 
   buildClipBar();
-  const first = scene.animationGroups.some((g) => g.name === wantedClip) ? wantedClip : 'Idle';
-  play(first);
+  const playable = (n) => scene.animationGroups.some((g) => g.name === n)
+    && (meta.armed || !isGunClip(n));
+  play(playable(wantedClip) ? wantedClip : 'Idle');
 
   countEl.textContent = `${meta.label} · ${scene.animationGroups.length} animations · CC0 Quaternius`;
   if (params.has('debug')) window.__soldier = { scene, engine, stage, figure, play, loadCharacter };
+}
+
+for (const item of MELEE_ITEMS) {
+  const b = document.createElement('button');
+  b.textContent = item.label;
+  b.dataset.melee = item.id;
+  b.addEventListener('click', () => {
+    meleeKind = item.id;
+    figure?.melee?.setItem(item.id);
+    for (const el of gearBar.children) el.classList.toggle('on', el.dataset.melee === item.id);
+    // Jump to a melee clip so the change is actually visible.
+    if (!MELEE_CLIPS.has(wantedClip)) play('Idle_Sword');
+  });
+  if (item.id === meleeKind) b.classList.add('on');
+  gearBar.appendChild(b);
 }
 
 for (const c of CHARACTERS) {

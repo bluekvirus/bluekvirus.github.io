@@ -24,6 +24,17 @@
   #cast button:hover { background: rgba(255,255,255,.10); color: #dfe5ec; }
   #cast button.on { background: #4d7ea8; border-color: #4d7ea8; color: #f2f6fa; }
 
+  #gear { display: flex; flex-wrap: wrap; gap: 6px; pointer-events: auto; margin-bottom: 8px; }
+  #gear button {
+    pointer-events: auto; cursor: pointer;
+    background: rgba(255,255,255,.04); color: #9aa595;
+    border: 1px solid rgba(255,255,255,.09); border-radius: 4px;
+    padding: 5px 10px; font: 600 11px/1 inherit; letter-spacing: .06em;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  #gear button:hover { background: rgba(255,255,255,.10); color: #e3ead9; }
+  #gear button.on { background: #6b8f4e; border-color: #6b8f4e; color: #f3f7ee; }
+
   #clips { display: flex; flex-wrap: wrap; gap: 6px; pointer-events: auto; }
   #clips button {
     pointer-events: auto; cursor: pointer;
@@ -52,6 +63,7 @@
 <canvas id="view" touch-action="none"></canvas>
 <div id="hud">
   <div id="cast"></div>
+  <div id="gear"></div>
   <div id="clips"></div>
   <div id="meta"><b>Poly Soldier</b> — drag to orbit, scroll to zoom · <span id="count">loading…</span></div>
 </div>
