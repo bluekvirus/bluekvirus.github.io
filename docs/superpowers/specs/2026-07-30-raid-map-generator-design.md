@@ -94,12 +94,16 @@ without a renderer.
    child. This is what makes the result read as an office with circulation
    instead of a subdivided box.
 4. **Rooms.** Leaves shrunk by wall thickness (0.15 m).
-5. **Doors.** For each adjacent pair in the split tree, place a door on the shared
-   wall segment, offset from corners by at least 0.6 m. Adjacency comes from the
-   tree, so every room is connected by construction.
-6. **Connectivity check.** Flood-fill the room graph from the entry. This should
-   never fail given step 5; if it does, that is a bug, and it throws rather than
-   silently regenerating.
+5. **Doors.** Adjacency is computed geometrically: two cells are neighbours when
+   their rectangles share an edge overlapping by at least door width plus twice
+   the corner margin. Tree adjacency is not usable here because a carved corridor
+   band sits between the two children it separates. Doors go on those shared
+   edges, offset from corners by at least 0.6 m.
+6. **Connectivity check.** Flood-fill the cell graph from the entry. BSP tiles the
+   footprint with no gaps, so a connected graph is expected; the flood fill is
+   the check that the splitter has not produced a sliver too thin to take a door.
+   Failure throws rather than silently regenerating — a seed that fails is a
+   splitter bug to fix, not a seed to discard.
 7. **Roles.** Entry room on the perimeter. Hostage room is the room with the
    greatest door-count distance from entry, minimum 3. Remaining rooms become
    guard posts or filler.
