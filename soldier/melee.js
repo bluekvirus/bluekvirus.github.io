@@ -109,20 +109,166 @@ function pipe(scene, root) {
   return parts;
 }
 
-const BUILDERS = { bat, knife, pipe };
+/** Crowbar: hex steel bar, gooseneck bend, flattened claw. */
+function crowbar(scene, root) {
+  const steel = mat(scene, 'meleeCrow', '#5d6068', { spec: '#3f434a', specPower: 40 });
+  const parts = [];
+
+  const shaft = BABYLON.MeshBuilder.CreateCylinder('crowShaft',
+    { diameter: 0.034, height: 0.52, tessellation: 6 }, scene);
+  shaft.position.y = 0.26;
+  shaft.material = steel;
+  parts.push(shaft);
+
+  // The gooseneck: a short angled section, then the claw doubling back on it.
+  const neck = BABYLON.MeshBuilder.CreateCylinder('crowNeck',
+    { diameter: 0.032, height: 0.11, tessellation: 6 }, scene);
+  neck.position.set(0.028, 0.555, 0);
+  neck.rotation.z = -32 * DEG;
+  neck.material = steel;
+  parts.push(neck);
+
+  const claw = BABYLON.MeshBuilder.CreateBox('crowClaw',
+    { width: 0.052, height: 0.075, depth: 0.016 }, scene);
+  claw.position.set(0.068, 0.585, 0);
+  claw.rotation.z = -68 * DEG;
+  claw.material = steel;
+  parts.push(claw);
+
+  // Chisel end at the butt, the flat the bar is prised with.
+  const chisel = BABYLON.MeshBuilder.CreateBox('crowChisel',
+    { width: 0.040, height: 0.05, depth: 0.014 }, scene);
+  chisel.position.y = 0.012;
+  chisel.material = steel;
+  parts.push(chisel);
+
+  for (const p of parts) p.parent = root;
+  return parts;
+}
+
+/** Machete: broad flat blade off a short scaled handle. */
+function machete(scene, root) {
+  const steel = mat(scene, 'meleeMachete', '#c2c8d0', { spec: '#7b828c', specPower: 52 });
+  const dark = mat(scene, 'meleeMacheteGrip', '#2b2620');
+  const parts = [];
+
+  const handle = BABYLON.MeshBuilder.CreateBox('machHandle',
+    { width: 0.034, height: 0.13, depth: 0.024 }, scene);
+  handle.position.y = 0.065;
+  handle.material = dark;
+  parts.push(handle);
+
+  const collar = BABYLON.MeshBuilder.CreateBox('machCollar',
+    { width: 0.040, height: 0.012, depth: 0.030 }, scene);
+  collar.position.y = 0.136;
+  collar.material = steel;
+  parts.push(collar);
+
+  // Blade: wide, flat, and widening slightly towards the tip like a real one.
+  const blade = BABYLON.MeshBuilder.CreateCylinder('machBlade',
+    { diameterTop: 0.085, diameterBottom: 0.062, height: 0.40, tessellation: 4 }, scene);
+  blade.position.y = 0.342;
+  blade.scaling.z = 0.14;
+  blade.material = steel;
+  parts.push(blade);
+
+  const tip = BABYLON.MeshBuilder.CreateCylinder('machTip',
+    { diameterTop: 0.006, diameterBottom: 0.085, height: 0.07, tessellation: 4 }, scene);
+  tip.position.y = 0.577;
+  tip.scaling.z = 0.14;
+  tip.material = steel;
+  parts.push(tip);
+
+  for (const p of parts) p.parent = root;
+  return parts;
+}
+
+/** Hatchet: short haft with a wedge head. */
+function hatchet(scene, root) {
+  const wood = mat(scene, 'meleeHaft', '#8a6136');
+  const steel = mat(scene, 'meleeHead', '#9aa1aa', { spec: '#646b74', specPower: 44 });
+  const parts = [];
+
+  const haft = BABYLON.MeshBuilder.CreateCylinder('hatHaft',
+    { diameterTop: 0.032, diameterBottom: 0.028, height: 0.30, tessellation: 8 }, scene);
+  haft.position.y = 0.15;
+  haft.material = wood;
+  parts.push(haft);
+
+  const eye = BABYLON.MeshBuilder.CreateBox('hatEye',
+    { width: 0.046, height: 0.075, depth: 0.040 }, scene);
+  eye.position.y = 0.315;
+  eye.material = steel;
+  parts.push(eye);
+
+  // Bit: a wedge widening away from the haft, flattened into a blade.
+  const bit = BABYLON.MeshBuilder.CreateCylinder('hatBit',
+    { diameterTop: 0.115, diameterBottom: 0.055, height: 0.075, tessellation: 4 }, scene);
+  bit.position.set(0.055, 0.315, 0);
+  bit.rotation.z = -90 * DEG;
+  bit.scaling.z = 0.42;
+  bit.material = steel;
+  parts.push(bit);
+
+  for (const p of parts) p.parent = root;
+  return parts;
+}
+
+/** Pipe wrench: handle with a fixed jaw and an offset lower jaw. */
+function wrench(scene, root) {
+  const steel = mat(scene, 'meleeWrench', '#6f757d', { spec: '#4a5057', specPower: 36 });
+  const red = mat(scene, 'meleeWrenchGrip', '#8d3a2e');
+  const parts = [];
+
+  const handle = BABYLON.MeshBuilder.CreateBox('wrHandle',
+    { width: 0.036, height: 0.30, depth: 0.026 }, scene);
+  handle.position.y = 0.15;
+  handle.material = red;
+  parts.push(handle);
+
+  const shank = BABYLON.MeshBuilder.CreateBox('wrShank',
+    { width: 0.040, height: 0.12, depth: 0.030 }, scene);
+  shank.position.y = 0.355;
+  shank.material = steel;
+  parts.push(shank);
+
+  const upperJaw = BABYLON.MeshBuilder.CreateBox('wrUpperJaw',
+    { width: 0.090, height: 0.030, depth: 0.030 }, scene);
+  upperJaw.position.set(0.030, 0.430, 0);
+  upperJaw.material = steel;
+  parts.push(upperJaw);
+
+  const lowerJaw = BABYLON.MeshBuilder.CreateBox('wrLowerJaw',
+    { width: 0.062, height: 0.026, depth: 0.028 }, scene);
+  lowerJaw.position.set(0.020, 0.360, 0);
+  lowerJaw.material = steel;
+  parts.push(lowerJaw);
+
+  for (const p of parts) p.parent = root;
+  return parts;
+}
+
+const BUILDERS = { bat, knife, pipe, crowbar, machete, hatchet, wrench };
 
 // Roll about an item's own long axis, in degrees. Only matters for items that
 // aren't round: the bat and pipe are cylinders, so rolling them changes nothing,
-// but the knife's blade is flattened and reads differently edge-on than flat-on.
-// Applied per part — every part is centred on the item's Y axis, so turning each
-// about its own Y turns the whole item about its shaft.
-const ROLL_DEG = { knife: 90 };
+// but a flat blade or an offset jaw reads differently edge-on than flat-on.
+//
+// Applied to the node the parts hang off, NOT to each part. Turning parts
+// individually only works while every one of them is centred on the item's own
+// axis; a crowbar claw or a wrench jaw sits out to the side, and rotating those
+// in place would pull the item apart instead of rolling it.
+const ROLL_DEG = { knife: 90, machete: 90, hatchet: 90, crowbar: 90, wrench: 90 };
 
 export const MELEE_ITEMS = [
   { id: 'none', label: 'Empty' },
   { id: 'bat', label: 'Bat' },
   { id: 'knife', label: 'Knife' },
   { id: 'pipe', label: 'Pipe' },
+  { id: 'crowbar', label: 'Crowbar' },
+  { id: 'machete', label: 'Machete' },
+  { id: 'hatchet', label: 'Hatchet' },
+  { id: 'wrench', label: 'Wrench' },
 ];
 
 /** Clips the melee item should appear for. */
@@ -319,6 +465,7 @@ export function createMelee(scene, loaded) {
 
   let kind = 'none';
   let parts = [];
+  let itemNode = null;
   // Seating is deferred to the first time the item is shown. Measuring at build
   // time would read the bind pose — fingers straight, hand centre out at the
   // fingertips — instead of the closed fist the melee clips actually pose.
@@ -364,12 +511,18 @@ export function createMelee(scene, loaded) {
     setItem(next) {
       if (next === kind) return;
       for (const p of parts) p.dispose();
+      itemNode?.dispose();
+      itemNode = null;
       parts = [];
       kind = next;
       const build = BUILDERS[next];
-      if (build) parts = build(scene, rig);
-      const roll = (ROLL_DEG[next] ?? 0) * DEG;
-      if (roll) for (const p of parts) p.rotation.y += roll;
+      if (build) {
+        // A node per item so the roll turns the whole thing about its own axis.
+        itemNode = new BABYLON.TransformNode('heldItem', scene);
+        itemNode.parent = rig;
+        itemNode.rotation.y = (ROLL_DEG[next] ?? 0) * DEG;
+        parts = build(scene, itemNode);
+      }
       seated = false;
       api.setVisible(api.visible);
     },
@@ -381,6 +534,8 @@ export function createMelee(scene, loaded) {
     },
     dispose() {
       for (const p of parts) p.dispose();
+      itemNode?.dispose();
+      itemNode = null;
       parts = [];
       rig.dispose();
     },
