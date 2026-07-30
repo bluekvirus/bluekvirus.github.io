@@ -2,6 +2,8 @@ import { createStage } from './stage.js';
 import { generateFloorplan } from './floorplan.js';
 import { assignRoles } from './roles.js';
 import { buildLevel } from './build.js';
+import { layoutProps } from './furnish.js';
+import { buildProps } from './props.js';
 
 const canvas = document.getElementById('view');
 const engine = new BABYLON.Engine(canvas, true, { antialias: true, stencil: false });
@@ -19,6 +21,7 @@ if (params.get('seed')) seedInput.value = params.get('seed');
 let plan = null;
 let mission = null;
 let level = null;
+let props = null;
 
 function regenerate(seed = seedInput.value) {
   seedInput.value = seed;
@@ -32,6 +35,9 @@ function regenerate(seed = seedInput.value) {
   // level's meshes and materials on every click of Regenerate.
   level?.dispose();
   level = buildLevel(scene, plan, mission, stage.shadows);
+
+  props?.dispose();
+  props = buildProps(scene, layoutProps(plan, mission), stage.shadows);
 
   const elapsed = performance.now() - started;
 
