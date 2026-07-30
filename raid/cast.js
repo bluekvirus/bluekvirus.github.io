@@ -17,7 +17,7 @@
 // move every sibling of that role unless that task clones the skeleton
 // per-figure first.
 
-import { seatFigure, buildChair } from './seated.js';
+import { layHostageOnFloor } from './seated.js';
 
 const ASSET_DIR = '../assets/quaternius/';
 
@@ -92,21 +92,18 @@ export async function populate(scene, mission, shadows) {
   mission.spawns.hostiles.forEach((s, i) => add('hostile', s, i));
   add('hostage', mission.spawns.hostage, 0);
 
-  // The hostage is posed rather than left standing, and the chair is sized to
-  // where the pose actually put the hips and feet.
+  // The hostage is laid on the floor rather than left standing.
   //
-  // Take the skeleton from the figure itself, not from `scene.skeletons`. An
-  // index into that array silently depends on load order, and would start
-  // posing the wrong character the moment the model set or import order changed.
-  const seated = figures.find((f) => f.role === 'hostage');
-  const metrics = seatFigure(seated.root, seated.skeleton);
-  const chair = buildChair(scene, metrics, mission.spawns.hostage);
+  // Take the figure from `figures` itself, not from `scene.skeletons` by
+  // index. An index into that array silently depends on load order, and
+  // would start posing the wrong character the moment the model set or
+  // import order changed.
+  const hostage = figures.find((f) => f.role === 'hostage');
+  layHostageOnFloor(hostage, scene);
 
   return {
     figures,
-    chair,
     dispose() {
-      chair.dispose();
       for (const f of figures) f.root.dispose(false, true);
       for (const t of Object.values(templates)) {
         for (const g of t.loaded.animationGroups) g.dispose();
