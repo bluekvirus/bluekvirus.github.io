@@ -5,7 +5,7 @@ import { CHARACTERS, DEFAULT_CHARACTER, byId } from './characters.js';
 import { createMelee, MELEE_ITEMS, MELEE_CLIPS } from './melee.js';
 import { loadSidearm, cloneSidearm } from './sidearm.js';
 
-const ASSET_DIR = './assets/quaternius/';
+const ASSET_DIR = '../assets/quaternius/';
 
 // The roadmap's stages map onto the pack's animation set. This order is the
 // order the picker lists them in; anything in the file not named here is
