@@ -152,21 +152,24 @@ export const MELEE_ITEMS = [
 /** Clips the melee item should appear for. */
 export const MELEE_CLIPS = new Set(['Idle_Sword', 'Sword_Slash']);
 
-// Placement of the grip in the right hand. Solved against the rig, not
-// reasoned: the importer leaves bone bases mirrored, so orientations authored
-// by hand there are meaningless. The search swept axis-aligned turns and scored
-// each on how well the item's +Y lined up with the hand's own forward axis
-// (wrist → knuckles); this one scores 0.998. The pack shares one skeleton, so
-// the same transform holds for every character.
+// How a held item sits in the right hand. Two transforms, because a pistol and
+// a bat are gripped differently:
 //
-// The rig origin already sits on the knuckle bone, so no offset is needed —
-// items are authored with their grip at the origin, which is what makes one
-// transform serve a knife and a bat alike.
+//   MELEE — the shaft runs THROUGH the fist, perpendicular to the direction the
+//     fingers point. Verified: the shaft's dot with the finger axis is 0.03,
+//     i.e. square to it, while heading forward past the knuckles.
+//   GUN — the barrel points where the fist points, so the weapon aims down the
+//     arm rather than out of the top of the hand. Scores 0.998 against the aim
+//     axis, matching how SWAT's and Suit's built-in pistols sit.
+//
+// Both were found by sweeping axis-aligned turns and scoring them against the
+// hand's own axes, not by reasoning: the importer leaves the bone bases
+// mirrored, so angles authored by hand in that space mean nothing. The pack
+// shares one skeleton, so these hold for every character.
 const GRIP_BONE = 'Middle1.R';
-const GRIP = {
-  pos: [0, 0, 0],
-  rotDeg: [180, -90, 0],
-};
+const GRIP_MELEE = { pos: [0, 0, 0], rotDeg: [-90, -90, 0] };
+const GRIP_GUN = { pos: [0, 0, 0], rotDeg: [-90, -90, -90] };
+const GRIP_FOR = (kind) => (kind === 'pistol' ? GRIP_GUN : GRIP_MELEE);
 
 /**
  * Build the melee rig. One node on the hand; items are created into it on
@@ -178,15 +181,22 @@ export function createMelee(scene, loaded) {
   const carrier = loaded.meshes.find((m) => m.skeleton === skeleton);
   if (!bone || !carrier) return null;
 
-  const rig = new BABYLON.TransformNode('meleeRig', scene);
+  const rig = new BABYLON.TransformNode('heldItemRig', scene);
   rig.attachToBone(bone, carrier);
-  rig.position.fromArray(GRIP.pos);
-  rig.rotationQuaternion = BABYLON.Quaternion.FromEulerAngles(
-    GRIP.rotDeg[0] * DEG, GRIP.rotDeg[1] * DEG, GRIP.rotDeg[2] * DEG,
-  );
-  // Cancel the importer's mirror so the item is not rendered inside-out.
-  rig.computeWorldMatrix(true);
-  if (rig.getWorldMatrix().determinant() < 0) rig.scaling.set(1, -1, 1);
+
+  const applyGrip = (kind) => {
+    const g = GRIP_FOR(kind);
+    rig.position.fromArray(g.pos);
+    rig.rotationQuaternion = BABYLON.Quaternion.FromEulerAngles(
+      g.rotDeg[0] * DEG, g.rotDeg[1] * DEG, g.rotDeg[2] * DEG,
+    );
+    // Cancel the importer's mirror so the item isn't rendered inside-out.
+    rig.scaling.setAll(1);
+    rig.computeWorldMatrix(true);
+    if (rig.getWorldMatrix().determinant() < 0) rig.scaling.set(1, -1, 1);
+    rig.computeWorldMatrix(true);
+  };
+  applyGrip('bat');
 
   let kind = 'none';
   let parts = [];
@@ -201,6 +211,7 @@ export function createMelee(scene, loaded) {
       for (const p of parts) p.dispose();
       parts = [];
       kind = next;
+      applyGrip(next);
       const build = BUILDERS[next];
       if (build) parts = build(scene, rig);
       api.setVisible(api.visible);
