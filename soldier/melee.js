@@ -149,15 +149,15 @@ const GRIP_WEIGHT = 0.6;
 // nudges it out to where the fingers actually close.
 //
 // The axes are measured, not assumed. `alongShaft` runs down the item itself —
-// the bone's x axis, verified at a dot of -1 against the bat's own long axis —
-// so NEGATIVE slides the item towards its tip and leaves more butt behind the
-// hand. That is what puts the fist around the middle of the handle instead of
-// clamped on its very end. `alongFingers` runs from the wrist out to the
+// the bone's x axis, verified at a dot of -1 against the bat's own long axis.
+// POSITIVE draws the weapon down into the hand, so the fist ends up further up
+// the handle with the butt tucked behind it; negative pushes it away, leaving
+// the butt standing proud of the fingers. `alongFingers` runs from the wrist to
 // fingertips, reading as down the arm on screen at ~290px per unit against a
 // fist only 33px long, so small numbers move a lot. `throughPalm` shifts the
 // handle sideways off the axis of the hand; it is deliberately 0 — depth is a
 // slide along the weapon itself, not a shove across the palm.
-const GRIP_OFFSET = { alongShaft: -0.08, alongFingers: 0.013, throughPalm: 0 };
+const GRIP_OFFSET = { alongShaft: 0.06, alongFingers: 0.013, throughPalm: 0 };
 
 /**
  * Where the closed fingers are actually drawn, in world space, for the pose on
