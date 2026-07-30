@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raid — procedural CQB map</title>
+<meta name="description" content="Seeded procedural office floor plans for a hostage-rescue scenario, in Babylon.js.">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; background: #191d24;
+    font-family: "Avenir Next", Avenir, "Segoe UI", system-ui, sans-serif; }
+  #view { width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
+
+  #hud { position: fixed; left: 0; right: 0; bottom: 0; padding: 14px 18px 16px; pointer-events: none; }
+  #controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; pointer-events: auto; }
+  #controls label { font: 600 11px/1 inherit; letter-spacing: .08em;
+    text-transform: uppercase; color: #7c8593; }
+  #seed { background: rgba(255,255,255,.06); color: #dfe5ec;
+    border: 1px solid rgba(255,255,255,.12); border-radius: 4px;
+    padding: 6px 9px; font: 500 12px/1 ui-monospace, Menlo, monospace; width: 150px; }
+  #rooms { width: 120px; }
+  button { cursor: pointer; background: rgba(255,255,255,.06); color: #b8c0cc;
+    border: 1px solid rgba(255,255,255,.12); border-radius: 4px;
+    padding: 7px 13px; font: 600 11px/1 inherit; letter-spacing: .09em; text-transform: uppercase; }
+  button:hover { background: rgba(255,255,255,.13); color: #eef2f7; }
+
+  #legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px;
+    font: 500 11px/1 inherit; letter-spacing: .06em; color: #7c8593; }
+  #legend span { display: flex; align-items: center; gap: 6px; }
+  #legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  #meta { margin-top: 8px; font: 500 11px/1.5 inherit; letter-spacing: .1em;
+    text-transform: uppercase; color: #6d7581; }
+</style>
+</head>
+<body>
+<canvas id="view" touch-action="none"></canvas>
+<div id="hud">
+  <div id="controls">
+    <label for="seed">Seed</label>
+    <input id="seed" value="alpha" spellcheck="false">
+    <label for="rooms">Rooms <span id="roomsValue">10</span></label>
+    <input id="rooms" type="range" min="8" max="12" step="1" value="10">
+    <button id="regenerate">Regenerate</button>
+    <button id="shuffle">Random seed</button>
+  </div>
+  <div id="legend">
+    <span><i style="background:#4d7ea8"></i>SWAT</span>
+    <span><i style="background:#b4453c"></i>Hostile</span>
+    <span><i style="background:#d59b3c"></i>Hostage</span>
+    <span><i style="background:#5c9455"></i>Extraction</span>
+  </div>
+  <div id="meta">drag to orbit, scroll to zoom · <span id="stats">generating…</span></div>
+</div>
+
+<script
+  src="https://cdn.jsdelivr.net/npm/babylonjs@9.18.1/babylon.js"
+  integrity="sha384-PHVMLQIlVKtLXOC0vSJTdGPLWru+b8vwe3YKDjM39sdPGcM7RPIdRh39jYC2zkGY"
+  crossorigin="anonymous"
+  referrerpolicy="no-referrer"></script>
+<script
+  src="https://cdn.jsdelivr.net/npm/babylonjs-loaders@9.18.1/babylonjs.loaders.min.js"
+  integrity="sha384-GSL/0d8hiK3bjSwbNqgp6VOVwgKRlhm0l6pXNOdFkPjS5YrRhHHy/03bN8DbJ9bq"
+  crossorigin="anonymous"
+  referrerpolicy="no-referrer"></script>
+<script type="module" src="./main.js"></script>
+</body>
+</html>
