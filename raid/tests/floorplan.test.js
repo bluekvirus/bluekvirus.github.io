@@ -153,3 +153,44 @@ test('there is exactly one door per adjacent pair', () => {
     assert.equal(new Set(edges).size, doors.length, `${seed}: adjacency and doors disagree`);
   }
 });
+
+test('no wall crosses a door opening', () => {
+  for (const seed of SEEDS.slice(0, 50)) {
+    const { walls, doors, config } = generateFloorplan(seed);
+    for (const door of doors) {
+      const half = config.doorWidth / 2 - 1e-3;
+      const box = door.axis === 'x'
+        ? { x: door.x - half, z: door.z - 1e-3, w: half * 2, d: 2e-3 }
+        : { x: door.x - 1e-3, z: door.z - half, w: 2e-3, d: half * 2 };
+      for (const w of walls) {
+        const hit = w.x < box.x + box.w && box.x < w.x + w.w
+          && w.z < box.z + box.d && box.z < w.z + w.d;
+        assert.ok(!hit, `${seed}: wall blocks door ${door.id}`);
+      }
+    }
+  }
+});
+
+test('walls are the configured thickness and height', () => {
+  for (const seed of SEEDS.slice(0, 20)) {
+    const { walls, config } = generateFloorplan(seed);
+    assert.ok(walls.length > 0, `${seed} produced no walls`);
+    for (const w of walls) {
+      assert.equal(w.height, config.wallHeight);
+      assert.ok(Math.abs(Math.min(w.w, w.d) - config.wallThickness) < 1e-6,
+        `${seed}: wall is ${Math.min(w.w, w.d)}m thick`);
+    }
+  }
+});
+
+test('the footprint perimeter is enclosed', () => {
+  for (const seed of SEEDS.slice(0, 20)) {
+    const { walls, bounds } = generateFloorplan(seed);
+    const near = 0.05;
+    const onEdge = (test) => walls.some(test);
+    assert.ok(onEdge((w) => Math.abs(w.z - bounds.z) < near), `${seed}: no north wall`);
+    assert.ok(onEdge((w) => Math.abs((w.z + w.d) - (bounds.z + bounds.d)) < near), `${seed}: no south wall`);
+    assert.ok(onEdge((w) => Math.abs(w.x - bounds.x) < near), `${seed}: no west wall`);
+    assert.ok(onEdge((w) => Math.abs((w.x + w.w) - (bounds.x + bounds.w)) < near), `${seed}: no east wall`);
+  }
+});

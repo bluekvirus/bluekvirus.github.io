@@ -13,6 +13,7 @@ export const FLOORPLAN_DEFAULTS = Object.freeze({
   corridorWidth: 1.8,
   corridorSplits: 2,   // how many of the earliest splits become corridors
   wallThickness: 0.15,
+  wallHeight: 2.6,
   doorWidth: 1.0,
   doorMargin: 0.6,
   splitJitter: 0.16,   // how far off centre a split may land, as a fraction
@@ -80,6 +81,64 @@ function assertConnected(plan) {
     const lost = plan.cells.filter((c) => !seen.has(c.id)).map((c) => c.id);
     throw new Error(`floorplan "${plan.seed}": cells ${lost.join(', ')} unreachable`);
   }
+}
+
+/**
+ * One cell edge becomes one or more wall segments, broken around any doors on it.
+ *
+ * Walls are built per edge and deduplicated by position, because two cells share
+ * an edge and would otherwise each build the same wall — doubling the geometry
+ * and leaving z-fighting along every interior partition.
+ */
+function buildWalls(cells, doors, cfg) {
+  const t = cfg.wallThickness;
+  const half = t / 2;
+  const segments = [];
+  const seen = new Set();
+
+  const push = (x, z, w, d) => {
+    const key = `${x.toFixed(3)}:${z.toFixed(3)}:${w.toFixed(3)}:${d.toFixed(3)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    segments.push({ x, z, w, d, height: cfg.wallHeight });
+  };
+
+  for (const cell of cells) {
+    const edges = [
+      { axis: 'x', at: cell.z, lo: cell.x, hi: cell.x + cell.w },
+      { axis: 'x', at: cell.z + cell.d, lo: cell.x, hi: cell.x + cell.w },
+      { axis: 'z', at: cell.x, lo: cell.z, hi: cell.z + cell.d },
+      { axis: 'z', at: cell.x + cell.w, lo: cell.z, hi: cell.z + cell.d },
+    ];
+
+    for (const edge of edges) {
+      // Every door sitting on this exact edge line punches a gap in it.
+      const gaps = doors
+        .filter((dr) => dr.axis === edge.axis
+          && Math.abs((edge.axis === 'x' ? dr.z : dr.x) - edge.at) < 1e-6)
+        .map((dr) => {
+          const centre = edge.axis === 'x' ? dr.x : dr.z;
+          return [centre - dr.width / 2, centre + dr.width / 2];
+        })
+        .filter(([lo, hi]) => hi > edge.lo && lo < edge.hi)
+        .sort((a, b) => a[0] - b[0]);
+
+      let cursor = edge.lo;
+      for (const [lo, hi] of gaps) {
+        if (lo > cursor) {
+          if (edge.axis === 'x') push(cursor, edge.at - half, lo - cursor, t);
+          else push(edge.at - half, cursor, t, lo - cursor);
+        }
+        cursor = Math.max(cursor, hi);
+      }
+      if (cursor < edge.hi) {
+        if (edge.axis === 'x') push(cursor, edge.at - half, edge.hi - cursor, t);
+        else push(edge.at - half, cursor, t, edge.hi - cursor);
+      }
+    }
+  }
+
+  return segments;
 }
 
 export function generateFloorplan(seed, overrides = {}) {
@@ -187,7 +246,8 @@ export function generateFloorplan(seed, overrides = {}) {
     }
   }
 
-  const plan = { seed, config, bounds, cells, adjacency, doors };
+  const walls = buildWalls(cells, doors, config);
+  const plan = { seed, config, bounds, cells, adjacency, doors, walls };
   assertConnected(plan);
   return plan;
 }
