@@ -4,6 +4,7 @@ import { assignRoles } from './roles.js';
 import { buildLevel } from './build.js';
 import { layoutProps } from './furnish.js';
 import { buildProps } from './props.js';
+import { populate } from './cast.js';
 
 const canvas = document.getElementById('view');
 const engine = new BABYLON.Engine(canvas, true, { antialias: true, stencil: false });
@@ -22,6 +23,7 @@ let plan = null;
 let mission = null;
 let level = null;
 let props = null;
+let cast = null;
 
 function regenerate(seed = seedInput.value) {
   seedInput.value = seed;
@@ -47,7 +49,24 @@ function regenerate(seed = seedInput.value) {
   statsEl.textContent =
     `${rooms} rooms · ${plan.doors.length} doors · hostage ${mission.depth[mission.hostageRoomId]} deep · ${elapsed.toFixed(1)}ms`;
 
-  if (params.has('debug')) window.__raid = { scene, engine, stage, plan, mission, regenerate };
+  if (params.has('debug')) window.__raid = { scene, engine, stage, plan, mission, cast, regenerate };
+
+  repopulate();
+}
+
+// A generation counter, not a boolean: clicking Regenerate twice quickly must
+// not leave the first load's figures standing on the second load's map.
+let castToken = 0;
+
+async function repopulate() {
+  const token = ++castToken;
+  const previous = cast;
+  cast = null;
+  const next = await populate(scene, mission, stage.shadows);
+  if (token !== castToken) { next.dispose(); return; }
+  previous?.dispose();
+  cast = next;
+  if (params.has('debug')) window.__raid.cast = cast;
 }
 
 document.getElementById('regenerate').addEventListener('click', () => regenerate());
