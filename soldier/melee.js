@@ -111,6 +111,13 @@ function pipe(scene, root) {
 
 const BUILDERS = { bat, knife, pipe };
 
+// Roll about an item's own long axis, in degrees. Only matters for items that
+// aren't round: the bat and pipe are cylinders, so rolling them changes nothing,
+// but the knife's blade is flattened and reads differently edge-on than flat-on.
+// Applied per part — every part is centred on the item's Y axis, so turning each
+// about its own Y turns the whole item about its shaft.
+const ROLL_DEG = { knife: 90 };
+
 export const MELEE_ITEMS = [
   { id: 'none', label: 'Empty' },
   { id: 'bat', label: 'Bat' },
@@ -361,6 +368,8 @@ export function createMelee(scene, loaded) {
       kind = next;
       const build = BUILDERS[next];
       if (build) parts = build(scene, rig);
+      const roll = (ROLL_DEG[next] ?? 0) * DEG;
+      if (roll) for (const p of parts) p.rotation.y += roll;
       seated = false;
       api.setVisible(api.visible);
     },
