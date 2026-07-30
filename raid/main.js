@@ -29,9 +29,23 @@ function regenerate(seed = seedInput.value) {
   seedInput.value = seed;
   const targetRooms = Number(roomsInput.value);
 
+  // Generation can legitimately throw: assertConnected (floorplan) and the
+  // minimum-hostage-depth check (roles) both reject a bad plan by throwing
+  // rather than quietly retrying. Do that work BEFORE touching anything on
+  // screen, so a throw leaves the previously rendered map (and previous
+  // plan/mission) completely alone instead of half-torn-down.
   const started = performance.now();
-  plan = generateFloorplan(seed, { targetRooms });
-  mission = assignRoles(plan);
+  let nextPlan, nextMission;
+  try {
+    nextPlan = generateFloorplan(seed, { targetRooms });
+    nextMission = assignRoles(nextPlan);
+  } catch (err) {
+    console.error(err);
+    statsEl.textContent = err.message;
+    return;
+  }
+  plan = nextPlan;
+  mission = nextMission;
 
   // Tear the previous build down first. Rebuilding over the top leaks a whole
   // level's meshes and materials on every click of Regenerate.

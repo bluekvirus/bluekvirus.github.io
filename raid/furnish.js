@@ -67,7 +67,7 @@ export function layoutProps(plan, mission) {
           (p) => Math.abs(p.x - x) * 2 < p.w + w && Math.abs(p.z - z) * 2 < p.d + d);
         if (onProp) continue;
 
-        placed.push({ kind, x, z, w, d, rotation: turned ? Math.PI / 2 : 0, cellId: cell.id });
+        placed.push({ kind, x, z, w, d, cellId: cell.id });
         break;
       }
     }

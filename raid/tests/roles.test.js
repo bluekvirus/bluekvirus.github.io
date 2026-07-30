@@ -81,6 +81,15 @@ test('the hostage is in the hostage room and guarded', () => {
   }
 });
 
+test('exactly two hostiles guard the hostage room', () => {
+  for (const seed of SEEDS) {
+    const plan = generateFloorplan(seed);
+    const m = assignRoles(plan);
+    const guards = m.spawns.hostiles.filter((h) => h.cellId === m.hostageRoomId).length;
+    assert.equal(guards, 2, `${seed}: ${guards} hostiles in the hostage room`);
+  }
+});
+
 test('no two spawns land on top of each other', () => {
   for (const seed of SEEDS) {
     const { spawns } = assignRoles(generateFloorplan(seed));

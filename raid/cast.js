@@ -44,6 +44,10 @@ function place(template, spawn, name) {
   const clone = template.root.clone(name, null);
   clone.setEnabled(true);
   clone.position.set(spawn.x, 0, spawn.z);
+  // Plain Euler assignment, not a rotationQuaternion — seated.js reads this
+  // clone's `.rotation.y` back out to derive the hostage's facing for its
+  // pose. Switching this to a rotationQuaternion would leave `.rotation`
+  // stale and silently break that pose with no error.
   clone.rotation = new BABYLON.Vector3(0, spawn.facing ?? 0, 0);
 
   // Read the skeleton off the clone's own meshes rather than assuming it

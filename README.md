@@ -16,5 +16,6 @@ import nothing from Babylon and run under Node:
 
     node --test
 
-The suite asserts determinism, connectivity, room sizes, door clearances, spawn
-placement and the generation budget across 200 seeds.
+The suite asserts determinism, connectivity, room sizes, door clearances and
+spawn placement across 200 seeds, plus the generation budget (100 timed runs)
+and every room count the HUD offers (5 counts x 40 seeds each).

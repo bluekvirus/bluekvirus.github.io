@@ -138,8 +138,12 @@ export function assignRoles(plan) {
 
   // Hostiles: two guarding the hostage, the rest spread over the deeper rooms so
   // the squad meets resistance on the way in rather than all at the objective.
+  //
+  // hostageRoom is excluded here (not just entry) so the round-robin below
+  // cannot re-add it on top of the two explicit guards — otherwise the same
+  // sort/filter that picked hostageRoom would put it back at guardable[0].
   const guardable = rooms
-    .filter((c) => c.id !== entry.id)
+    .filter((c) => c.id !== entry.id && c.id !== hostageRoom.id)
     .sort((a, b) => (depth[b.id] ?? 0) - (depth[a.id] ?? 0) || a.id - b.id);
 
   const assignments = [hostageRoom, hostageRoom];
