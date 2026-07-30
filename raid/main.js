@@ -60,11 +60,13 @@ let castToken = 0;
 
 async function repopulate() {
   const token = ++castToken;
-  const previous = cast;
-  cast = null;
+  // `cast` is deliberately NOT cleared before the await. A second call would
+  // then capture null as its "previous" and the original would never be
+  // disposed — the winner must dispose whatever is genuinely live when it
+  // settles, not a handle captured before it started loading.
   const next = await populate(scene, mission, stage.shadows);
   if (token !== castToken) { next.dispose(); return; }
-  previous?.dispose();
+  cast?.dispose();
   cast = next;
   if (params.has('debug')) window.__raid.cast = cast;
 }
