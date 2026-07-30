@@ -9,8 +9,8 @@
 // hit exactly. Measuring the posed figure instead leaves the geometry free to
 // move to wherever the pose actually ended up.
 //
-// Two rig quirks (measured in the browser while building this, not documented
-// anywhere) make "just rotate some bones" insufficient on its own:
+// Four rig quirks (measured in the browser while building this, not
+// documented anywhere) make "just rotate some bones" insufficient on its own:
 //
 // 1. Every bone on this rig is linked to a companion TransformNode, and
 //    Skeleton.prepare() re-syncs each bone FROM its linked node every time it
@@ -24,22 +24,42 @@
 //    / PT.R look like toe bones from the name but sit ~0.6m from the foot in
 //    the bind pose — an IK pole target, not a mesh joint — so they are left
 //    alone.)
+// 3. UpperLeg.L/R's LOCAL axes are tilted relative to the body (their bind
+//    rotationQuaternion is far from identity). Rotating the thigh about its
+//    own local X only, given that tilt, swings the knee out sideways instead
+//    of forward, and on the right leg backwards as well as sideways: the
+//    hostage read as doing the side splits, not sitting (measured:
+//    footSeparation 1.56m, hipToKnee.R.forward negative). No local-axis angle
+//    fixes this — the tilt is baked into the bind pose and any pure local-X
+//    rotation inherits it.
+// 4. The obvious fix for #3 — hinge about the figure's WORLD-space lateral
+//    axis instead of the bone's local axis — runs into a second problem: the
+//    figure's clone root has `scaling.z === -1` (a mirror baked in, almost
+//    certainly this pack's glTF-to-Babylon handedness conversion). Any
+//    technique that recovers a rotation by DECOMPOSING a matrix built through
+//    that mirrored root (`Bone.rotate(..., Space.WORLD, mesh)`, and even
+//    `Bone.getRotationQuaternion(Space.WORLD, mesh)`, whose
+//    `_scalingDeterminant` correction is keyed to the BONE's own scale, not
+//    the MESH's) comes back with unpredictable sign flips — measured
+//    directly: the same hinge angle, sign, and axis produced a correct pose
+//    at one spawn facing and a backwards one at another. Positions, by
+//    contrast, are never ambiguous: `Bone.getAbsolutePosition(mesh)` reflects
+//    exactly what is rendered, mirror included, because the renderer needs
+//    that same position to draw the mesh in the right place. So the pose
+//    below never decomposes a rotation out of a mirrored matrix — it hinges a
+//    plain WORLD-space vector (bindpose thigh/shin direction) with a plain
+//    rotation matrix, then solves each bone's LOCAL rotation by aiming it at
+//    the resulting target position (`aimBoneAt`), which only ever needs
+//    positions and the already-reliable position-space `worldToBoneLocal`.
+//    Verified facing-independent by construction, and re-confirmed by testing
+//    three unrelated spawn facings (0.22, 2.14, -1.7 rad) side by side.
 
 const DEG = Math.PI / 180;
 
-// Rotations applied to the base (standing) pose, in each bone's own space.
-// UpperLeg/LowerLeg were tuned by measuring the posed figure in the browser,
-// not copied from a first guess: the brief's starting angles (-88 / 82) swing
-// the thigh fully horizontal, which asks the shin to reach further than its
-// own length to get back to the fixed floor-level foot — see task-11-report.md.
-// -62 / 5 keeps the reach within the shin's length so the re-attached foot
-// lands close to where the shin actually ends, instead of merely close to the
-// floor.
+// Local-space rotations for bones whose local axis happens to point where
+// you'd expect when perturbed — arms, torso, and the foot's own small tilt.
+// The legs are NOT here; see rig quirks 3–4 above.
 const POSE = {
-  'UpperLeg.L': [-62, 0, 0],
-  'UpperLeg.R': [-62, 0, 0],
-  'LowerLeg.L': [5, 0, 0],
-  'LowerLeg.R': [5, 0, 0],
   'Foot.L': [8, 0, 0],
   'Foot.R': [8, 0, 0],
   'UpperArm.L': [12, 0, -22],
@@ -49,16 +69,29 @@ const POSE = {
   'Torso': [6, 0, 0],
 };
 
+// Thigh and shin hinge angles, about the figure's world-space lateral axis
+// (perpendicular to its facing direction), applied as plain vector rotations
+// — see rig quirk 4 above for why. Tuned by measuring the posed figure
+// against fix round 1's acceptance criteria (both thighs going forward not
+// sideways, both shins dropping into the sagittal plane, feet within a
+// hand's width of each other, hips landing on the seat, feet on the floor).
+// -90 puts the thigh fully horizontal, matching a natural seated silhouette;
+// 105 folds the shin back down far enough that the re-attached foot lands
+// near the floor rather than well above or below it.
+const THIGH_HINGE_DEG = -90;
+const SHIN_HINGE_DEG = 105;
+
 // How far the whole pelvis drops to bring the hips down to a plausible seat
 // height. Applied to Body, not Hips: UpperLeg.L/R are parented to Body as a
 // SIBLING of Hips, not a descendant of it, so translating Hips would lower
 // the spine while leaving the legs attached at standing height. Body is the
 // shared ancestor of both, so moving it drags hips, spine and legs down
 // together while the (separately re-attached) feet stay near the floor.
-const BODY_DROP = 0.38;
+const BODY_DROP = 0.20;
 
 /** The TransformNode a bone's world transform is actually read from — see
- * note 1 above. Rotating the bone itself does not survive the next prepare(). */
+ * rig quirk 1 above. Rotating the bone itself does not survive the next
+ * prepare(). */
 function boneNode(bone) {
   return bone.getTransformNode() ?? bone;
 }
@@ -67,12 +100,36 @@ function boneNode(bone) {
  * space — the space its position property is defined in. Bone.getAbsolutePosition
  * inverted, in other words; Bone.getLocalPositionFromAbsolute does NOT do this
  * (it expresses the point in the bone's OWN rotated frame, which is a different
- * thing, and was confirmed empirically to give the wrong answer here). */
+ * thing, and was confirmed empirically to give the wrong answer here). This is
+ * matrix-based, not a rotation decomposition, so — unlike the quaternion route
+ * described in rig quirk 4 — the root's mirror scale cannot corrupt it. */
 function worldToBoneLocal(absolutePos, bone, mesh) {
   const parent = bone.getParent();
   const parentAbsolute = parent ? parent.getAbsoluteMatrix().clone() : BABYLON.Matrix.Identity();
   const parentInMesh = parentAbsolute.multiply(mesh.getWorldMatrix());
   return BABYLON.Vector3.TransformCoordinates(absolutePos, BABYLON.Matrix.Invert(parentInMesh));
+}
+
+/** Rotate `bone` about its own position (never translating it) so that the
+ * fixed reference direction `v1` — expressed in `bone`'s PARENT's local,
+ * un-rotated-by-`bone` frame, exactly the frame `bone.position` itself lives
+ * in — ends up pointing at `targetAbsPos` instead. For a bone with a real
+ * child, `v1` is simply that child's `.position`; for a leaf bone (no bone
+ * child — see rig quirk 2), `v1` is whatever fixed bind-pose direction the
+ * caller wants to steer (here, the shin's reach toward the ankle). Solved via
+ * a shortest-arc quaternion between two plain vectors — no matrix
+ * decomposition anywhere, so rig quirk 4 cannot apply. */
+function aimBoneAt(bone, v1, targetAbsPos, mesh) {
+  const targetInParentFrame = worldToBoneLocal(targetAbsPos, bone, mesh);
+  const v2 = targetInParentFrame.subtract(bone.position);
+  const from = v1.clone().normalize();
+  const to = v2.normalize();
+  const dot = Math.max(-1, Math.min(1, BABYLON.Vector3.Dot(from, to)));
+  const angle = Math.acos(dot);
+  let axis = BABYLON.Vector3.Cross(from, to);
+  if (axis.length() < 1e-6) axis = new BABYLON.Vector3(1, 0, 0); // bind already points at target
+  else axis.normalize();
+  boneNode(bone).rotationQuaternion = BABYLON.Quaternion.RotationAxis(axis, angle);
 }
 
 export function seatFigure(root, skeleton) {
@@ -86,23 +143,68 @@ export function seatFigure(root, skeleton) {
   // before posing rather than dropping this pose.
   const byName = (name) => skeleton.bones.find((b) => b.name === name);
 
-  // Capture, in the bind pose, where each foot sits relative to its shin —
-  // rotated into the shin's OWN local frame so the offset can be re-applied
-  // after the shin rotates (see rig quirk 2 above).
+  // Force a fresh world matrix before reading any bind-pose position below.
+  // A just-cloned TransformNode's world matrix is not guaranteed current
+  // until the next render pass computes it — reading positions through a
+  // stale one silently corrupts every measurement that follows, and this was
+  // mistaken for a facing-dependent rig quirk before being tracked down.
+  root.computeWorldMatrix(true);
+  skeleton.prepare(true);
+  skeleton.computeAbsoluteMatrices(true);
+
+  const facing = root.rotation.y;
+  const lateralAxis = new BABYLON.Vector3(Math.cos(facing), 0, -Math.sin(facing));
+
+  // Capture, purely from bind-pose POSITIONS (never a decomposed rotation —
+  // see rig quirk 4), each leg's thigh and shin reach vectors, plus where the
+  // foot sits relative to the shin.
   const legs = ['L', 'R'].map((side) => {
+    const upperLeg = byName(`UpperLeg.${side}`);
     const lowerLeg = byName(`LowerLeg.${side}`);
     const foot = byName(`Foot.${side}`);
-    if (!lowerLeg || !foot) return null;
-    const lowerLegPos = lowerLeg.getAbsolutePosition(root).clone();
-    const lowerLegRot = lowerLeg.getRotationQuaternion(BABYLON.Space.WORLD, root).clone();
-    const footOffset = foot.getAbsolutePosition(root).subtract(lowerLegPos);
-    footOffset.rotateByQuaternionToRef(BABYLON.Quaternion.Inverse(lowerLegRot), footOffset);
-    return { lowerLeg, foot, footOffset };
+    if (!upperLeg || !lowerLeg || !foot) return null;
+    const bindThighVec = lowerLeg.getAbsolutePosition(root).subtract(upperLeg.getAbsolutePosition(root));
+    const bindShinVec = foot.getAbsolutePosition(root).subtract(lowerLeg.getAbsolutePosition(root));
+    // The shin has no bone child (rig quirk 2), so aimBoneAt's reference
+    // direction is built by hand: the bind foot position, expressed in the
+    // shin's PARENT frame — the same frame lowerLeg.position lives in.
+    const shinAimFrom = worldToBoneLocal(foot.getAbsolutePosition(root), lowerLeg, root)
+      .subtract(lowerLeg.position);
+    return { upperLeg, lowerLeg, foot, bindThighVec, bindShinVec, shinAimFrom };
   }).filter(Boolean);
 
   const body = byName('Body');
   if (body) boneNode(body).position.y -= BODY_DROP;
+  root.computeWorldMatrix(true);
+  skeleton.prepare(true);
+  skeleton.computeAbsoluteMatrices(true);
 
+  // Thigh: aim UpperLeg so its real child (LowerLeg) lands where the bind
+  // thigh vector ends up after a plain rotation about the lateral axis.
+  const thighTurn = BABYLON.Matrix.RotationAxis(lateralAxis, THIGH_HINGE_DEG * DEG);
+  for (const leg of legs) {
+    const newVec = BABYLON.Vector3.TransformNormal(leg.bindThighVec, thighTurn);
+    const target = leg.upperLeg.getAbsolutePosition(root).add(newVec);
+    aimBoneAt(leg.upperLeg, leg.lowerLeg.position, target, root);
+  }
+  root.computeWorldMatrix(true);
+  skeleton.prepare(true);
+  skeleton.computeAbsoluteMatrices(true);
+
+  // Shin: rotations about a common fixed axis commute, so the shin's total
+  // world-space turn from bind is exactly (thigh + shin) about that same
+  // lateral axis — not an approximation. Foot is dragged straight to the
+  // same target position (no rotation solve needed for it).
+  const totalTurn = BABYLON.Matrix.RotationAxis(lateralAxis, (THIGH_HINGE_DEG + SHIN_HINGE_DEG) * DEG);
+  for (const leg of legs) {
+    const newVec = BABYLON.Vector3.TransformNormal(leg.bindShinVec, totalTurn);
+    const target = leg.lowerLeg.getAbsolutePosition(root).add(newVec);
+    aimBoneAt(leg.lowerLeg, leg.shinAimFrom, target, root);
+    boneNode(leg.foot).position.copyFrom(worldToBoneLocal(target, leg.foot, root));
+  }
+
+  // Arms, torso, and the foot's own small tilt: local-space rotations are
+  // fine here — see rig quirk 3, which is specific to the legs.
   for (const [name, [x, y, z]] of Object.entries(POSE)) {
     const bone = byName(name);
     if (!bone) continue;
@@ -113,23 +215,12 @@ export function seatFigure(root, skeleton) {
     node.rotationQuaternion = current.multiply(turn);
   }
 
-  // `force = true` on both calls: without it, each is a no-op once this
-  // skeleton has already been prepared for the current render — Skeleton
-  // .prepare() caches by render id, and computeAbsoluteMatrices() has its own
-  // dirty flag. Both would otherwise silently skip the recompute needed to
-  // read back correct positions below.
-  skeleton.prepare(true);
-  skeleton.computeAbsoluteMatrices(true);
-
-  // Drag each foot back to its shin, which has since rotated out from under it.
-  for (const leg of legs) {
-    const newLowerLegPos = leg.lowerLeg.getAbsolutePosition(root);
-    const newLowerLegRot = leg.lowerLeg.getRotationQuaternion(BABYLON.Space.WORLD, root);
-    const offset = leg.footOffset.clone();
-    offset.rotateByQuaternionToRef(newLowerLegRot, offset);
-    const footTarget = newLowerLegPos.add(offset);
-    boneNode(leg.foot).position.copyFrom(worldToBoneLocal(footTarget, leg.foot, root));
-  }
+  // `force = true`: without it, both calls are no-ops once this skeleton has
+  // already been prepared for the current render — Skeleton.prepare() caches
+  // by render id, and computeAbsoluteMatrices() has its own dirty flag. Both
+  // would otherwise silently skip the recompute needed to read back correct
+  // positions below.
+  root.computeWorldMatrix(true);
   skeleton.prepare(true);
   skeleton.computeAbsoluteMatrices(true);
 
