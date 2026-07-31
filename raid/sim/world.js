@@ -44,6 +44,29 @@ const STALL_FRACTION = 0.2;
 const GOAL_STALL_WINDOW = 90;
 const GOAL_STALL_EPS = 0.02;
 
+// How long the tie-breaking sideways nudge (below) stays applied after a
+// stall strike. It is deliberately a short impulse rather than a standing
+// steering bias: at the magnitudes needed to shove an agent out of a
+// face-to-face corridor stand-off, a *permanent* sideways term overwhelms
+// the goal pull entirely and steers the agent along whatever wall it is
+// against instead of toward its destination — which does not deadlock it
+// (it keeps moving, so no "stuck" signal fires) but does live-lock it, and
+// the escalation then ratchets the bias up forever because the agent never
+// gets closer to its goal. Shoving for a third of a second and then
+// steering normally again gives the agent a chance to actually use the
+// space the shove opened up. Escalation still persists across bursts, so a
+// genuinely symmetric stand-off keeps getting harder shoves.
+const NUDGE_TICKS = 20;
+
+// How long an agent that has been asked to give way spends backing off.
+// A sideways nudge cannot solve a stand-off over a gap narrower than
+// `SIM.separation` — two agents contending for a one-cell doorway push each
+// other out of it symmetrically, and nudging both aside only decides which
+// of them misses the opening. One of them has to retreat far enough to stop
+// pushing at all, which means clearing the separation radius: 0.75m at
+// walking pace is ~32 ticks, so this is that with margin.
+const YIELD_TICKS = 45;
+
 export function createWorld(plan, mission, placements = []) {
   const grid = buildNavGrid(plan, placements);
   const rng = makeRng(`${plan.seed}:sim`);
@@ -92,6 +115,9 @@ export function createWorld(plan, mission, placements = []) {
       _goalCountdown: GOAL_STALL_WINDOW,
       _goalStrikes: 0,
       _nudgeBias: 0,
+      _nudgeTicks: 0,
+      _yieldTicks: 0,
+      _yieldTo: -1,
     });
   };
   mission.spawns.swat.forEach((s) => add('swat', s));
@@ -121,7 +147,7 @@ export function createWorld(plan, mission, placements = []) {
     a.path = smoothPath(grid, raw, () => true);
     a.pathIndex = 0;
     a.waitingFor = -1;
-    a._goalBestDist = Infinity; a._goalCountdown = GOAL_STALL_WINDOW; a._goalStrikes = 0; a._nudgeBias = 0;
+    a._goalBestDist = Infinity; a._goalCountdown = GOAL_STALL_WINDOW; a._goalStrikes = 0; a._nudgeBias = 0; a._nudgeTicks = 0; a._yieldTicks = 0;
     return true;
   };
 
@@ -177,7 +203,7 @@ export function createWorld(plan, mission, placements = []) {
       if (!a.path || a.pathIndex >= a.path.length) {
         a.vx = 0; a.vz = 0;
         a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW; a._stallSawWall = false;
-        a._goalBestDist = Infinity; a._goalCountdown = GOAL_STALL_WINDOW; a._goalStrikes = 0; a._nudgeBias = 0;
+        a._goalBestDist = Infinity; a._goalCountdown = GOAL_STALL_WINDOW; a._goalStrikes = 0; a._nudgeBias = 0; a._nudgeTicks = 0; a._yieldTicks = 0;
         continue;
       }
 
@@ -212,19 +238,38 @@ export function createWorld(plan, mission, placements = []) {
         a._goalCountdown = GOAL_STALL_WINDOW;
         a._goalStrikes = 0;
         a._nudgeBias = 0;
+        a._nudgeTicks = 0;
+        a._yieldTicks = 0;
       } else {
         a._goalCountdown--;
         if (a._goalCountdown <= 0) {
           replan(a);
           a._goalStrikes++;
           a._goalCountdown = GOAL_STALL_WINDOW;
-          // Re-arm the baseline at the CURRENT distance, not `Infinity`.
-          // Resetting to `Infinity` here would make next tick's comparison
-          // trivially true — any finite distance is "less than Infinity" —
-          // which would immediately zero `_goalStrikes` again and this
-          // could never count past a single strike no matter how many
-          // times the deadlock recurred.
-          a._goalBestDist = goalDist;
+          // `_goalBestDist` is deliberately NOT touched here. It is a
+          // ratchet: the closest this agent has ever come to this goal,
+          // lowered only by genuine progress and never raised. Both other
+          // ways of re-arming it are broken, and each hid a different live
+          // bug:
+          //
+          //   Infinity — every finite distance then counts as an
+          //   improvement next tick, zeroing `_goalStrikes` immediately, so
+          //   the counter could never pass one strike however many times
+          //   the same deadlock recurred.
+          //
+          //   the CURRENT distance — this raises the bar back up to
+          //   wherever the agent has drifted to, which lets an agent that
+          //   is merely oscillating slip the ratchet: drift 10cm away, and
+          //   drifting the same 10cm back now reads as fresh progress and
+          //   resets the strike count. That is not a deadlock — the agent
+          //   is moving the whole time, so no "stuck" signal fires — but it
+          //   is a live-lock, and it is why one agent and the hostage could
+          //   stand there trading centimetres for 9,000 ticks while the
+          //   detector reported them as making progress.
+          //
+          // Only beating the best distance ever achieved counts, so
+          // oscillation accumulates strikes exactly as a full standstill
+          // does.
           // A replan alone did not break it last time either — most likely
           // several agents (or an agent and the hostage) are pressed
           // together in a tight space, so a fresh route from here still
@@ -236,9 +281,51 @@ export function createWorld(plan, mission, placements = []) {
           // here), so a persistent deadlock needs an answer that keeps
           // growing until it wins, not a single fixed-size tie-breaker.
           // Zero until an agent has proven itself stuck more than once.
+          //
+          // Applied as a bounded impulse (see NUDGE_TICKS), not as a
+          // standing bias. Left standing, a bias this large simply replaces
+          // the goal direction: the agent slides sideways along whatever
+          // wall it is against, forever, at a perfectly healthy speed. That
+          // is a live-lock, not a deadlock — every "is it stuck" signal
+          // reports a moving agent — and the escalation above then ratchets
+          // the bias to its cap and pins it there, so the recovery becomes
+          // the thing preventing recovery.
           if (a._goalStrikes > 1) {
-            const sign = a.id % 2 === 0 ? 1 : -1;
-            a._nudgeBias = sign * Math.min(1.5, 0.25 * (a._goalStrikes - 1));
+            // Is another agent actually in the way? A stand-off over an
+            // opening narrower than `SIM.separation` cannot be nudged
+            // apart: both sides push each other clear of the gap, and
+            // shoving both sideways only decides which of them misses it.
+            // Exactly one has to give way, so the two sides must never
+            // reach the same answer — lowest id has right of way. The
+            // choice of rule is arbitrary; that it is stable, symmetric-
+            // breaking, and derived from nothing but agent ids (so a seed
+            // replays identically) is not.
+            let rival = -1;
+            let rivalDist = Infinity;
+            for (const other of agents) {
+              if (other === a) continue;
+              // Only an agent that is ITSELF getting nowhere counts as a
+              // stand-off partner. Someone merely walking past happens to
+              // be within separation range constantly, and backing off for
+              // them costs three quarters of a second and buys nothing —
+              // measured as a 2.2x slowdown on the one seed with a long
+              // escort down a corridor, where the hostage yielded to every
+              // squad member that drifted alongside it.
+              if (other._goalStrikes === 0) continue;
+              const d = Math.hypot(a.x - other.x, a.z - other.z);
+              if (d < SIM.separation && d < rivalDist) { rivalDist = d; rival = other.id; }
+            }
+            if (rival >= 0 && rival < a.id) {
+              a._yieldTo = rival;
+              a._yieldTicks = YIELD_TICKS;
+              a._nudgeBias = 0;
+              a._nudgeTicks = 0;
+            } else {
+              const sign = a.id % 2 === 0 ? 1 : -1;
+              a._nudgeBias = sign * Math.min(1.5, 0.25 * (a._goalStrikes - 1));
+              a._nudgeTicks = NUDGE_TICKS;
+              a._yieldTicks = 0;
+            }
           }
         }
       }
@@ -270,9 +357,29 @@ export function createWorld(plan, mission, placements = []) {
       // perpendicular to the goal direction itself (not the possibly
       // near-zero combined vector above) so it is well-defined exactly
       // when it is needed most: at an exact cancellation.
-      if (a._nudgeBias) {
+      // Expires on its own so the agent goes back to steering at its goal
+      // between shoves; `_goalStrikes` is deliberately NOT reset with it, so
+      // a stand-off that survives one burst gets a harder one next time.
+      if (a._nudgeTicks > 0) {
         dirX += -baseDirZ * a._nudgeBias;
         dirZ += baseDirX * a._nudgeBias;
+        a._nudgeTicks--;
+        if (a._nudgeTicks === 0) a._nudgeBias = 0;
+      }
+
+      // Giving way: back straight off the agent with right of way,
+      // overriding the goal pull rather than adding to it. Adding to it is
+      // what the separation term already does, and it is precisely what is
+      // not enough here — the goal keeps pulling this agent back into the
+      // opening it is supposed to be clearing. Bounded in time, so a
+      // yielding agent always resumes its own route.
+      if (a._yieldTicks > 0) {
+        const rival = agents[a._yieldTo];
+        const ox = a.x - rival.x;
+        const oz = a.z - rival.z;
+        const d = Math.hypot(ox, oz);
+        if (d > 1e-6) { dirX = ox / d; dirZ = oz / d; }
+        a._yieldTicks--;
       }
 
       const norm = Math.hypot(dirX, dirZ) || 1;

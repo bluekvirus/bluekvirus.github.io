@@ -136,3 +136,68 @@ test('replaying the previously-frozen seed reproduces the same run', () => {
   assert.equal(a.hash, b.hash);
   assert.equal(a.phase, b.phase);
 });
+
+// A live-lock, not a deadlock. Seed `verify2-12-1` (12 rooms) hung with SWAT
+// 1 holding a path 5.4m short of its goal at a steady 0.25 m/s: not frozen —
+// creeping, oscillating a few centimetres back and forth against a wall and
+// never arriving, while the other three sat waiting at the leg target
+// forever. Every stall signal in place at the time was built for an agent
+// that had STOPPED, and this one never stopped.
+//
+// So this test does not assert "did it finish" (a live-locked agent can keep
+// a run finishing by luck on some other seed) or "did anyone stand perfectly
+// still" (the whole point is that nobody did). It measures the thing that
+// actually distinguishes progress from motion: the longest run of ticks an
+// agent can hold a path without ever beating its own best distance to the
+// goal it is currently pursuing. Oscillation scores exactly as badly as a
+// full standstill, which is the property the detector was missing.
+test('an agent that only oscillates is treated as stalled, not as moving', () => {
+  const MAX_TICKS = 60 * 240;
+  // 30 simulated seconds of motion that gets an agent no closer to where it
+  // is going is not traffic, it is a live-lock. Measured worst across these
+  // runs is ~870 ticks; the same measurement before this was fixed reached
+  // 13,744 — the entire run, on this very seed.
+  const NO_PROGRESS_LIMIT = 1800;
+  const PROGRESS_EPS = 0.05;
+  let worstRun = 0;
+  let worstAt = null;
+
+  for (let rooms = 8; rooms <= 12; rooms++) {
+    for (let i = 0; i < 5; i++) {
+      const seed = `verify2-${rooms}-${i}`;
+      const { world, orders } = build(seed, { targetRooms: rooms });
+      // Per agent: which goal it is chasing, the closest it has come to that
+      // goal, and how long since it last beat that. Reset when the goal
+      // changes, so being sent somewhere new never counts against an agent.
+      const track = new Map(world.agents.map((a) => [a.id, { key: null, best: Infinity, run: 0 }]));
+      let ticks = 0;
+
+      while (orders.phase !== 'done' && ticks < MAX_TICKS) {
+        world.tick();
+        orders.update(world);
+        ticks++;
+        for (const a of world.agents) {
+          const t = track.get(a.id);
+          if (!a.goal || !a.path) { t.key = null; t.best = Infinity; t.run = 0; continue; }
+          const key = `${a.goal.x},${a.goal.z}`;
+          if (t.key !== key) { t.key = key; t.best = Infinity; t.run = 0; }
+          const dist = Math.hypot(a.x - a.goal.x, a.z - a.goal.z);
+          if (dist < t.best - PROGRESS_EPS) { t.best = dist; t.run = 0; }
+          else {
+            t.run++;
+            if (t.run > worstRun) { worstRun = t.run; worstAt = `${seed} agent ${a.id}`; }
+          }
+        }
+      }
+
+      // Checked per seed, and deliberately BEFORE the "did it finish"
+      // assertion: a live-locked agent is the diagnosis, running out of
+      // budget is only the eventual symptom, and this is the assertion that
+      // names which one it was.
+      assert.ok(worstRun < NO_PROGRESS_LIMIT,
+        `${worstAt} held a path for ${worstRun} consecutive ticks without ever getting closer to its goal`);
+      assert.equal(orders.phase, 'done',
+        `${seed} (rooms=${rooms}): dry run did not finish within ${MAX_TICKS / 60} simulated seconds`);
+    }
+  }
+});

@@ -11,6 +11,27 @@ const ARRIVED = 1.4;      // how close counts as "at" a room or point
 const PATROL_PAUSE = 2.5; // seconds a hostile waits before picking a new spot
 const FORMATION_RADIUS = 0.8; // metres each squad member's destination sits off the shared point
 
+// Neither phase below had any bound on how long it would wait: both block
+// on every squad member arriving, so one member that cannot get there hangs
+// the whole mission forever rather than failing. The simulation underneath
+// is what has to not strand agents in the first place — this is the outer
+// guard that turns "never finishes" into "finishes late", which is a
+// bounded, observable degradation instead of a hang.
+//
+// 3600 ticks is 60 simulated seconds. The longest single leg measured over
+// 460 healthy dry runs (families sweep/verify2/dry across 8-12 rooms, plus
+// all 60 orders-N seeds) was 2157 ticks, so this cannot fire on a run that
+// is merely slow. Re-issuing is the first response because it is the one
+// that cannot fabricate progress: every goal is recomputed from where the
+// agents actually are, which re-paths a straggler and resets its stall
+// bookkeeping. Only the advance phase may eventually stop waiting and move
+// to the next leg — its legs are waypoints on the way to the hostage, so
+// skipping one degrades the route, not the outcome. The extract phase never
+// gets that escape: "everyone reached extraction" is the thing the dry run
+// exists to demonstrate, and a timeout must not be able to claim it.
+const LEG_TIMEOUT = 3600;
+const LEG_MAX_REISSUES = 3;
+
 export function createOrders(plan, mission) {
   const rng = makeRng(`${plan.seed}:orders`);
   const byId = new Map(plan.cells.map((c) => [c.id, c]));
@@ -83,8 +104,20 @@ export function createOrders(plan, mission) {
     issued: false,
     issueQueue: null, // pending {agent, point} setGoal calls for the current leg, staggered one per tick
     issueOk: true,
+    legTicks: 0,   // ticks spent on the current leg, for the watchdog above
+    reissues: 0,   // how many times this leg's goals have been re-issued
     patrol: new Map(), // agentId -> seconds until the next patrol goal
   };
+
+  // Start the current leg over: fresh setGoal calls for everyone from wherever
+  // they actually are now.
+  const restartLeg = () => {
+    state.issued = false;
+    state.issueQueue = null;
+    state.legTicks = 0;
+  };
+
+  const beginLeg = () => { restartLeg(); state.reissues = 0; };
 
   // A route-leg transition used to fire every squad member's setGoal call on
   // the very same tick — up to four full A* queries landing in one tick,
@@ -131,6 +164,20 @@ export function createOrders(plan, mission) {
 
       if (state.phase === 'advance') {
         const centre = centreOf(route[state.leg]);
+        state.legTicks++;
+        if (state.issued && state.legTicks > LEG_TIMEOUT) {
+          state.reissues++;
+          if (state.reissues > LEG_MAX_REISSUES) {
+            // Stop waiting for whoever is not coming. The next leg's goals
+            // go out to the whole squad, straggler included, so this is
+            // "keep going and take them with you", not "abandon them".
+            state.leg++;
+            beginLeg();
+            if (state.leg >= route.length) { state.phase = 'rescue'; }
+            return;
+          }
+          restartLeg();
+        }
         if (!state.issued) {
           // Only counted as issued once every SWAT member actually got a route —
           // a failed setGoal leaves that agent's path null forever otherwise, and
@@ -142,8 +189,7 @@ export function createOrders(plan, mission) {
         const allThere = swat.every((a) => Math.hypot(a.x - centre.x, a.z - centre.z) < ARRIVED + 1.2);
         if (allThere) {
           state.leg++;
-          state.issued = false;
-          state.issueQueue = null;
+          beginLeg();
           if (state.leg >= route.length) { state.phase = 'rescue'; }
         }
         return;
@@ -152,8 +198,7 @@ export function createOrders(plan, mission) {
       if (state.phase === 'rescue') {
         // The hostage joins the squad and they all head for extraction.
         state.phase = 'extract';
-        state.issued = false;
-        state.issueQueue = null;
+        beginLeg();
         return;
       }
 
@@ -164,6 +209,9 @@ export function createOrders(plan, mission) {
         // instead of sharing the exact extraction coordinate with whichever
         // SWAT member happens to arrive alongside it.
         const total = swat.length + 1;
+        state.legTicks++;
+        // Re-issue only — never a way out of the arrival check itself.
+        if (state.issued && state.legTicks > LEG_TIMEOUT) { state.reissues++; restartLeg(); }
         if (!state.issued) {
           const tasks = swat.map((a, i) => ({ agent: a, point: formationPoint(exit, i, total) }));
           tasks.push({ agent: hostage, point: formationPoint(exit, swat.length, total) });
