@@ -71,8 +71,20 @@ test('the hostage stays put until rescued', () => {
   const h = world.agents.find((a) => a.role === 'hostage');
   const x0 = h.x;
   const z0 = h.z;
-  for (let i = 0; i < 60 * 20; i++) { world.tick(); orders.update(world); }
-  assert.ok(Math.hypot(h.x - x0, h.z - z0) < 0.1, 'the hostage wandered off');
+  // Bounded by the phase, not a fixed tick count: the squad now runs to
+  // contact (see orders.js), so a fixed 20-second window that used to fall
+  // entirely inside 'advance' can now run past the rescue transition on a
+  // short route, and the hostage legitimately starts moving once rescued.
+  // The invariant this test actually cares about is "before rescue", so
+  // testing exactly that is what keeps it meaningful regardless of squad
+  // speed. 60 simulated seconds is a generous ceiling on 'advance' alone —
+  // comfortably above the ~12s this seed takes at run speed — so a
+  // regression that stalls the squad still fails this loop's own bound
+  // rather than silently exiting having asserted nothing.
+  let ticks = 0;
+  while (orders.phase === 'advance' && ticks < 60 * 60) { world.tick(); orders.update(world); ticks++; }
+  assert.notEqual(ticks, 60 * 60, 'the squad never left the advance phase within 60 simulated seconds');
+  assert.ok(Math.hypot(h.x - x0, h.z - z0) < 0.1, 'the hostage wandered off before being rescued');
 });
 
 // Regression: seed `dry-10-8` with `{ targetRooms: 10 }` used to freeze one

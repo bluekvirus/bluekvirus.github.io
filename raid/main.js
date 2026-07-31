@@ -162,6 +162,15 @@ function advance(dt) {
     accumulator -= SIM.step;
     steps++;
   }
+  // If the cap above was what stopped the loop, there can still be a whole
+  // step or more banked. sync()'s alpha (agents.js) is documented as 0..1 —
+  // a 0.25s frame at 4x speed leaves ~0.87s banked here, which would hand
+  // sync() alpha ~52 and extrapolate figures more than a metre past their
+  // real targets for several frames. The sim is already as far behind as
+  // this frame is willing to make it catch up, so dropping the remainder is
+  // correct: replaying it would only take more ticks away from later frames
+  // and make the stutter worse, not better.
+  if (accumulator >= SIM.step) accumulator = 0;
 }
 
 regenerate();

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { generateFloorplan } from '../floorplan.js';
+import { generateFloorplan, FLOORPLAN_DEFAULTS } from '../floorplan.js';
 import { assignRoles } from '../roles.js';
 import { layoutProps } from '../furnish.js';
 import { buildNavGrid, NAV_DEFAULTS } from '../sim/navgrid.js';
@@ -86,4 +86,20 @@ test('building the grid is deterministic', () => {
 
 test('defaults are frozen', () => {
   assert.throws(() => { NAV_DEFAULTS.cell = 1; });
+});
+
+// Doorway re-opening (buildNavGrid's "across" reach for a door, see that
+// file) has to reach past the agent-radius erosion carve() applies to every
+// room, or a doorway would never actually reopen and every room would seal
+// shut. At today's defaults that margin is wallThickness/2 + cell (0.325)
+// over agentRadius (0.32) — only 5mm. Nothing else pins that relationship,
+// so tuning either constant in isolation could silently reverse it, sealing
+// every doorway in the game with no test catching it until agents started
+// freezing at their own room's exit. This pins the relationship, not the
+// exact numbers, so either constant can still move as long as the other
+// moves with it.
+test('door re-opening reach clears the agent-radius erosion', () => {
+  const across = FLOORPLAN_DEFAULTS.wallThickness / 2 + NAV_DEFAULTS.cell;
+  assert.ok(across > NAV_DEFAULTS.agentRadius,
+    `door reach ${across} does not clear the agent radius erosion ${NAV_DEFAULTS.agentRadius} — doorways would seal shut`);
 });

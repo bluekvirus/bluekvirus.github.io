@@ -403,6 +403,8 @@ export function createWorld(plan, mission, placements = []) {
       // segment as a genuine wall-corner jam is not what is stopping the
       // agent, and must not be reported, or mistaken, as such.
       const primary = refusalAt(nx, nz);
+      const slideX = primary.blocked ? refusalAt(nx, a.z) : null;
+      const slideZ = (slideX && slideX.blocked) ? refusalAt(a.x, nz) : null;
 
       // A shut door directly ahead starts opening once in reach, regardless
       // of whether this particular step actually moves the agent. Tying
@@ -411,15 +413,24 @@ export function createWorld(plan, mission, placements = []) {
       // opening can perpetually find SOME sliding movement via separation,
       // never fully stopping, so the door would never be told to open at
       // all and nobody would ever get through.
-      if (primary.doorId >= 0) {
-        const door = doors[primary.doorId];
-        if (door.state === 'closed' && Math.hypot(door.x - a.x, door.z - a.z) < SIM.doorReach) {
-          door.state = 'opening';
+      //
+      // Checked across all three refusals this step considered (the direct
+      // step, and both sliding fallbacks), not just the direct one. A step
+      // refused head-on by a WALL while a slide axis is refused by a closed
+      // door is exactly the shape that used to disarm this trigger: `primary`
+      // reported the wall, so its doorId was -1 and the door behind the slide
+      // was never told to open, even though the agent was standing right next
+      // to it. That left only the slower 90-tick goal-stall path to recover.
+      // Using the same three refusals the classification below inspects
+      // keeps this consistent with what actually stopped the agent.
+      for (const r of [primary, slideX, slideZ]) {
+        if (r && r.doorId >= 0) {
+          const door = doors[r.doorId];
+          if (door.state === 'closed' && Math.hypot(door.x - a.x, door.z - a.z) < SIM.doorReach) {
+            door.state = 'opening';
+          }
         }
       }
-
-      const slideX = primary.blocked ? refusalAt(nx, a.z) : null;
-      const slideZ = (slideX && slideX.blocked) ? refusalAt(a.x, nz) : null;
 
       if (!primary.blocked) { a.x = nx; a.z = nz; }
       else if (!slideX.blocked) { a.x = nx; }

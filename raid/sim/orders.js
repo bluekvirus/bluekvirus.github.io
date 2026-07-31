@@ -6,6 +6,7 @@
 // the boundary was drawn in the wrong place.
 
 import { makeRng } from '../rng.js';
+import { SIM } from './world.js';
 
 const ARRIVED = 1.4;      // how close counts as "at" a room or point
 const PATROL_PAUSE = 2.5; // seconds a hostile waits before picking a new spot
@@ -30,7 +31,15 @@ const FORMATION_RADIUS = 0.8; // metres each squad member's destination sits off
 // gets that escape: "everyone reached extraction" is the thing the dry run
 // exists to demonstrate, and a timeout must not be able to claim it.
 const LEG_TIMEOUT = 3600;
-const LEG_MAX_REISSUES = 3;
+// 4, not 3: LEG_TIMEOUT * (LEG_MAX_REISSUES + 1) must not collide with the
+// 14,400-tick ceilings the long-run test harnesses use (orders.test.js's
+// "dry" and "replaying" suites both run for 60 * 240 ticks). At 3 reissues
+// the product was exactly 14,400 — a coincidence that let either constant
+// silently mask a real regression in the other (a genuinely-hung run and a
+// deliberately-exhausted watchdog would time out at the identical tick and
+// be indistinguishable). 4 keeps the same "keep going without them" recovery
+// this watchdog exists for, just decoupled from that number.
+const LEG_MAX_REISSUES = 4;
 
 export function createOrders(plan, mission) {
   const rng = makeRng(`${plan.seed}:orders`);
@@ -107,6 +116,13 @@ export function createOrders(plan, mission) {
     legTicks: 0,   // ticks spent on the current leg, for the watchdog above
     reissues: 0,   // how many times this leg's goals have been re-issued
     patrol: new Map(), // agentId -> seconds until the next patrol goal
+    // Ground truth for whether the squad actually arrived at the hostage's
+    // room, as opposed to the advance watchdog giving up and skipping the
+    // final leg (see the reissue-exhaustion branch below). `phase === 'done'`
+    // alone cannot tell those apart — both reach 'extract' and then 'done'
+    // the same way — so this is what lets a caller (and the end-to-end test)
+    // tell a genuine rescue from a mission that quietly walked past it.
+    hostageReached: false,
   };
 
   // Start the current leg over: fresh setGoal calls for everyone from wherever
@@ -142,6 +158,9 @@ export function createOrders(plan, mission) {
 
   const api = {
     get phase() { return state.phase; },
+    // Ground truth behind `phase === 'done'` — see the field comment on
+    // `state.hostageReached` above.
+    get hostageReached() { return state.hostageReached; },
     update(world) {
       const swat = world.agents.filter((a) => a.role === 'swat');
       const hostage = world.agents.find((a) => a.role === 'hostage');
@@ -163,6 +182,12 @@ export function createOrders(plan, mission) {
       }
 
       if (state.phase === 'advance') {
+        // A squad advances to contact fast, not at a stroll — running is
+        // what SIM.runSpeed and the Run clip exist for (see agents.js). Set
+        // every tick rather than once: cheap (no side effects beyond the
+        // number `wants` itself, see world.js), and keeps this correct even
+        // if an agent's wants was ever touched elsewhere.
+        for (const a of swat) a.wants = SIM.runSpeed;
         const centre = centreOf(route[state.leg]);
         state.legTicks++;
         if (state.issued && state.legTicks > LEG_TIMEOUT) {
@@ -190,7 +215,14 @@ export function createOrders(plan, mission) {
         if (allThere) {
           state.leg++;
           beginLeg();
-          if (state.leg >= route.length) { state.phase = 'rescue'; }
+          if (state.leg >= route.length) {
+            state.phase = 'rescue';
+            // Reached here via genuine arrival (`allThere`), never via the
+            // reissue-exhaustion watchdog above — that branch returns before
+            // this point, so this is only ever true when the squad actually
+            // stood in the hostage's room.
+            state.hostageReached = true;
+          }
         }
         return;
       }
@@ -204,6 +236,12 @@ export function createOrders(plan, mission) {
 
       if (state.phase === 'extract') {
         const exit = mission.spawns.extraction;
+        // A squad moves fast to contact but slow with a casualty: escorting
+        // the hostage out is a walk, not a run, for the whole squad as well
+        // as the hostage — same reasoning as the run speed set in 'advance'
+        // above.
+        for (const a of swat) a.wants = SIM.walkSpeed;
+        hostage.wants = SIM.walkSpeed;
         // The squad plus the rescued hostage: one more formation slot than
         // the advance phase used, so the hostage gets its own spot too
         // instead of sharing the exact extraction coordinate with whichever
@@ -215,7 +253,6 @@ export function createOrders(plan, mission) {
         if (!state.issued) {
           const tasks = swat.map((a, i) => ({ agent: a, point: formationPoint(exit, i, total) }));
           tasks.push({ agent: hostage, point: formationPoint(exit, swat.length, total) });
-          hostage.wants = 1.4;
           stageIssue(world, tasks);
         }
         const out = [...swat, hostage].every((a) => Math.hypot(a.x - exit.x, a.z - exit.z) < 3);

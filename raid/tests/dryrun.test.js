@@ -16,7 +16,15 @@ import { createOrders } from '../sim/orders.js';
 // defect went unmeasured in a run that had gone quietly wrong. A dry run
 // that reaches 'done' because nothing happened must fail here too, so this
 // test also totals distance travelled and counts doors opened, and requires
-// both to be non-trivial — on top of the per-tick geometry checks.
+// both to be non-trivial — on top of the per-tick geometry checks. Total
+// distance alone is not enough by itself, though: the patrolling hostiles
+// wander constantly, so a frozen SWAT squad could still clear a >50m total.
+// Distance is also tracked per agent, and the SWAT squad specifically is
+// required to have covered real ground. And 'done' itself is checked against
+// `orders.hostageReached`, not just the phase name — the rescue phase is a
+// no-op, and the advance watchdog can in principle skip straight past the
+// hostage's room on its final leg, which would let a run reach 'done' having
+// never actually gotten there.
 test('a full headless mission completes cleanly at every room count', () => {
   const SEEDS_PER_ROOM_COUNT = 4;
   const MAX_TICKS = 60 * 120; // missions run ~77-87 simulated seconds; generous ceiling, not a target
@@ -31,6 +39,7 @@ test('a full headless mission completes cleanly at every room count', () => {
       const orders = createOrders(plan, mission);
 
       const last = new Map(world.agents.map((a) => [a.id, { x: a.x, z: a.z }]));
+      const distance = new Map(world.agents.map((a) => [a.id, 0]));
       let totalDistance = 0;
       const openedDoors = new Set();
 
@@ -55,7 +64,9 @@ test('a full headless mission completes cleanly at every room count', () => {
           }
 
           const prev = last.get(a.id);
-          totalDistance += Math.hypot(a.x - prev.x, a.z - prev.z);
+          const step = Math.hypot(a.x - prev.x, a.z - prev.z);
+          totalDistance += step;
+          distance.set(a.id, distance.get(a.id) + step);
           prev.x = a.x; prev.z = a.z;
         }
 
@@ -66,6 +77,13 @@ test('a full headless mission completes cleanly at every room count', () => {
 
       assert.equal(orders.phase, 'done', `${seed}: did not finish within ${MAX_TICKS / 60} simulated seconds`);
 
+      // 'done' means "the phase machine reached its last state", which the
+      // advance-leg watchdog can in principle reach without the squad ever
+      // actually standing in the hostage's room (see orders.js). This is the
+      // assertion that makes 'done' mean the rescue actually happened.
+      assert.ok(orders.hostageReached,
+        `${seed}: mission reported done, but the squad never genuinely reached the hostage room (the advance watchdog skipped the final leg)`);
+
       // A run that "completes" without anyone actually moving would still
       // reach 'done' if a goal resolved off-grid and every phase fell through
       // an unchecked branch. These two are what tell a real mission apart
@@ -74,6 +92,14 @@ test('a full headless mission completes cleanly at every room count', () => {
         `${seed}: agents travelled only ${totalDistance.toFixed(1)}m total across the whole mission`);
       assert.ok(openedDoors.size > 0,
         `${seed}: no door was ever opened during the run`);
+
+      // Total distance alone is satisfied by the patrolling hostiles pacing
+      // their rooms for the whole run — a frozen SWAT squad would still pass
+      // it. Require the squad specifically to have covered real ground.
+      for (const a of world.agents.filter((x) => x.role === 'swat')) {
+        assert.ok(distance.get(a.id) > 5,
+          `${seed}: SWAT agent ${a.id} travelled only ${distance.get(a.id).toFixed(1)}m — a frozen squad would still pass the aggregate distance check`);
+      }
     }
   }
 });

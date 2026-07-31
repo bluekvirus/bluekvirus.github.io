@@ -23,9 +23,11 @@ and every room count the HUD offers (5 counts x 40 seeds each).
 The mission itself — navigation, steering, doors, orders — is also pure data
 under `sim/`, so the same `node --test` run plays the whole thing out headless:
 no Babylon, no DOM, no screen. That is what makes `dryrun.test.js` possible —
-it steps a full mission to completion on every room count and checks every
-single tick for wall-clipping, closed-door-clipping and stuck positions,
-something no amount of watching the 3D view could establish. It is also what
+it steps a full mission to completion on every room count, checks every
+single tick for wall-clipping and closed-door-clipping, and then confirms the
+squad genuinely reached the hostage, opened doors, and covered real ground
+rather than merely reporting done, something no amount of watching the 3D
+view could establish. It is also what
 keeps a machine-learning environment on the table later: a simulation that
 already runs headless and deterministic needs no new harness to be steppable
 by a training loop instead of a HUD.
