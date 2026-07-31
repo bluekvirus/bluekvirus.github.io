@@ -21,9 +21,13 @@ export function bindAgents(scene, world, cast) {
   // One clip set per SKELETON, not per figure: the pack shares a skeleton
   // between every figure built from the same model (four SWAT, seven
   // hostiles), so starting a clip for one starts it for all of them. The
-  // hostage is excluded entirely — its floor pose is held by written-back
-  // TransformNode values (see seated.js) and starting any clip on it would
-  // destroy that pose.
+  // hostage is excluded from clip playback ONLY — its floor pose is held by
+  // written-back TransformNode values (see seated.js), and starting any clip
+  // would overwrite those bone-local values and destroy the pose. Moving the
+  // hostage's ROOT is fine and does not touch bone-local values at all, so
+  // its position and facing are synced like every other agent below — the
+  // hostage must be seen leaving with the squad for the rescue to read as
+  // having happened.
   const rigs = new Map();
   for (const fig of cast.figures) {
     if (fig.role === 'hostage') continue;
@@ -135,10 +139,15 @@ export function bindAgents(scene, world, cast) {
      *   every sim step regardless of render rate, dt does not.
      */
     sync(alpha, dt) {
+      // Every agent's root is moved, INCLUDING the hostage: translating the
+      // root only changes where the figure sits in the world, not any
+      // bone-local transform, so the floor pose from seated.js survives the
+      // move untouched. Only clip playback (the `rigs` loop below) excludes
+      // the hostage.
       for (let i = 0; i < world.agents.length; i++) {
         const a = world.agents[i];
         const fig = cast.figures[i];
-        if (!fig || fig.role === 'hostage') continue;
+        if (!fig) continue;
         const p = previous[i];
         fig.root.position.x = p.x + (a.x - p.x) * alpha;
         fig.root.position.z = p.z + (a.z - p.z) * alpha;
