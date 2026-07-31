@@ -120,7 +120,16 @@ export function buildLevel(scene, plan, mission, shadows) {
   }
 
   // Spawn markers: a disc under each figure, plus the extraction point.
+  //
+  // The per-figure discs are returned as `agentDiscs`, in the same order the
+  // spawns are listed (swat, then hostiles, then the hostage) — which is the
+  // order `cast.populate` builds its figures and the order `createWorld`
+  // builds its agents, so index i is the same character in all three. Since
+  // phase B these figures walk, and a disc left at its spawn point is a
+  // ghost marking where someone used to be; `agents.js` carries them along.
+  // The extraction disc marks a place, not a person, and stays put.
   const discs = [];
+  const agentDiscs = [];
   const addDisc = (p, kind, radius) => {
     const disc = BABYLON.MeshBuilder.CreateCylinder(`marker_${kind}_${discs.length}`,
       { diameter: radius * 2, height: 0.02, tessellation: 18 }, scene);
@@ -129,16 +138,18 @@ export function buildLevel(scene, plan, mission, shadows) {
     materials.push(disc.material);
     discs.push(disc);
     created.push(disc);
+    return disc;
   };
 
-  for (const s of mission.spawns.swat) addDisc(s, 'swat', 0.42);
-  for (const s of mission.spawns.hostiles) addDisc(s, 'hostile', 0.42);
-  addDisc(mission.spawns.hostage, 'hostage', 0.5);
+  for (const s of mission.spawns.swat) agentDiscs.push(addDisc(s, 'swat', 0.42));
+  for (const s of mission.spawns.hostiles) agentDiscs.push(addDisc(s, 'hostile', 0.42));
+  agentDiscs.push(addDisc(mission.spawns.hostage, 'hostage', 0.5));
   addDisc(mission.spawns.extraction, 'extraction', 0.9);
 
   return {
     meshes: created,
     doorLeaves,
+    agentDiscs,
     dispose() {
       for (const m of created) m.dispose(false, false);
       for (const m of materials) m.dispose();

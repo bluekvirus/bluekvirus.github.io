@@ -80,7 +80,7 @@ function directionalClip(agent) {
   return rel > 0 ? 'Run_Left' : 'Run_Right';
 }
 
-export function bindAgents(scene, world, cast, orders) {
+export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
   // One clip set per SKELETON, not per figure: the pack shares a skeleton
   // between every figure built from the same model (four SWAT, seven
   // hostiles), so starting a clip for one starts it for all of them. The
@@ -206,6 +206,18 @@ export function bindAgents(scene, world, cast, orders) {
         const p = previous[i];
         fig.root.position.x = p.x + (a.x - p.x) * alpha;
         fig.root.position.z = p.z + (a.z - p.z) * alpha;
+
+        // The role marker rides along under the figure. Its x/z are copied
+        // rather than the disc being parented to `fig.root`, because that
+        // root carries the glTF import's mirrored (1,1,-1) scaling — the
+        // same handedness flip that facing.js exists to undo — and hanging
+        // more geometry off it is how that flip spreads. Its own y is left
+        // alone: the disc sits just above the floor, not at hip height.
+        const disc = agentDiscs[i];
+        if (disc) {
+          disc.position.x = fig.root.position.x;
+          disc.position.z = fig.root.position.z;
+        }
 
         let delta = a.facing - p.facing;
         while (delta > Math.PI) delta -= Math.PI * 2;

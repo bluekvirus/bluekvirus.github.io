@@ -1,0 +1,2 @@
+[     269ms] [LOG] BJS - [10:36:41]: Babylon.js v9.18.1 - WebGL2 - Parallel shader compilation @ https://cdn.jsdelivr.net/npm/babylonjs@9.18.1/babylon.js:0
+[     352ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://localhost:8080/favicon.ico:0

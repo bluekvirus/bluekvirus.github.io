@@ -1,0 +1,19 @@
+- generic [active] [ref=f21e1]:
+  - generic:
+    - generic [ref=f21e3]:
+      - generic [ref=f21e4]: Seed
+      - textbox "Seed" [ref=f21e5]: alpha
+      - generic [ref=f21e6]: Rooms 10
+      - slider "Rooms 10" [ref=f21e7]: "10"
+      - button "Regenerate" [ref=f21e8] [cursor=pointer]
+      - button "Random seed" [ref=f21e9] [cursor=pointer]
+      - button "Pause" [ref=f21e10] [cursor=pointer]
+      - button "Step" [ref=f21e11] [cursor=pointer]
+      - generic [ref=f21e12]: Speed 1×
+      - slider "Speed 1×" [ref=f21e13]: "1"
+    - generic:
+      - generic: SWAT
+      - generic: Hostile
+      - generic: Hostage
+      - generic: Extraction
+    - generic: drag to orbit, scroll to zoom · 10 rooms · 20 doors · hostage 4 deep · 13.8ms
