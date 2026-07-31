@@ -5,6 +5,10 @@ import { buildLevel } from './build.js';
 import { layoutProps } from './furnish.js';
 import { buildProps } from './props.js';
 import { populate } from './cast.js';
+import { createWorld, SIM } from './sim/world.js';
+import { createOrders } from './sim/orders.js';
+import { bindDoors } from './doors.js';
+import { bindAgents } from './agents.js';
 
 const canvas = document.getElementById('view');
 const engine = new BABYLON.Engine(canvas, true, { antialias: true, stencil: false });
@@ -24,6 +28,10 @@ let mission = null;
 let level = null;
 let props = null;
 let cast = null;
+let world = null;
+let orders = null;
+let agentBinding = null;
+let doorBinding = null;
 
 function regenerate(seed = seedInput.value) {
   seedInput.value = seed;
@@ -52,8 +60,21 @@ function regenerate(seed = seedInput.value) {
   level?.dispose();
   level = buildLevel(scene, plan, mission, stage.shadows);
 
+  const placements = layoutProps(plan, mission);
   props?.dispose();
-  props = buildProps(scene, layoutProps(plan, mission), stage.shadows);
+  props = buildProps(scene, placements, stage.shadows);
+
+  // The agent binding reads `cast`, which loads asynchronously (see
+  // repopulate below) — it can only be torn down here, never rebuilt, so it
+  // never goes on interpolating a world that is about to be replaced. It is
+  // recreated once the matching cast has actually settled.
+  agentBinding?.dispose();
+  agentBinding = null;
+  doorBinding?.dispose();
+  world = createWorld(plan, mission, placements);
+  orders = createOrders(plan, mission);
+  doorBinding = bindDoors(scene, world, level.doorLeaves);
+  accumulator = 0;
 
   const elapsed = performance.now() - started;
 
@@ -63,7 +84,7 @@ function regenerate(seed = seedInput.value) {
   statsEl.textContent =
     `${rooms} rooms · ${plan.doors.length} doors · hostage ${mission.depth[mission.hostageRoomId]} deep · ${elapsed.toFixed(1)}ms`;
 
-  if (params.has('debug')) window.__raid = { scene, engine, stage, plan, mission, cast, regenerate };
+  if (params.has('debug')) window.__raid = { scene, engine, stage, plan, mission, cast, world, orders, sim: SIM, regenerate };
 
   repopulate();
 }
@@ -82,6 +103,11 @@ async function repopulate() {
   if (token !== castToken) { next.dispose(); return; }
   cast?.dispose();
   cast = next;
+  // Only the winning load ever reaches here, so `world` is guaranteed to be
+  // the generation this cast belongs to — a superseded call already bailed
+  // out above without touching the binding.
+  agentBinding?.dispose();
+  agentBinding = bindAgents(scene, world, cast);
   if (params.has('debug')) window.__raid.cast = cast;
 }
 
@@ -95,7 +121,58 @@ roomsInput.addEventListener('input', () => {
 });
 seedInput.addEventListener('change', () => regenerate());
 
+const playPauseBtn = document.getElementById('playPause');
+const speedInput = document.getElementById('speed');
+const speedValueEl = document.getElementById('speedValue');
+
+const SPEEDS = [0.5, 1, 2, 4];
+let running = true;
+let accumulator = 0;
+let lastFrame = performance.now();
+
+playPauseBtn.addEventListener('click', () => {
+  running = !running;
+  playPauseBtn.textContent = running ? 'Pause' : 'Play';
+});
+
+document.getElementById('stepOnce').addEventListener('click', () => {
+  if (!world) return;
+  agentBinding?.snapshot();
+  world.tick();
+  orders.update(world);
+  // Land exactly on the new state (alpha = 1) instead of the interpolated
+  // midpoint the accumulator would otherwise leave behind, so one Step click
+  // is visibly one whole tick rather than a fraction of one.
+  accumulator = SIM.step;
+});
+
+speedInput.addEventListener('input', () => {
+  speedValueEl.textContent = `${SPEEDS[Number(speedInput.value)]}×`;
+});
+
+function advance(dt) {
+  accumulator += dt;
+  let steps = 0;
+  // Cap the catch-up. Without this, a backgrounded tab returns with seconds of
+  // accumulated time and the simulation freezes the page trying to run it all.
+  while (accumulator >= SIM.step && steps < 8) {
+    agentBinding?.snapshot();
+    world.tick();
+    orders.update(world);
+    accumulator -= SIM.step;
+    steps++;
+  }
+}
+
 regenerate();
 
-engine.runRenderLoop(() => scene.render());
+engine.runRenderLoop(() => {
+  const now = performance.now();
+  const dt = Math.min(0.25, (now - lastFrame) / 1000);
+  lastFrame = now;
+  if (running && world) advance(dt * SPEEDS[Number(speedInput.value)]);
+  agentBinding?.sync(world ? accumulator / SIM.step : 0, dt);
+  doorBinding?.sync();
+  scene.render();
+});
 window.addEventListener('resize', () => engine.resize());
