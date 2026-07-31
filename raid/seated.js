@@ -57,6 +57,22 @@ export function layHostageOnFloor(figure, scene) {
   const death = ownedGroups(figure, scene).find((g) => g.name === 'Death');
   if (!death) throw new Error('layHostageOnFloor: no Death animation group owned by this figure');
 
+  // Capture each targeted node's pose BEFORE the floor pose overwrites it —
+  // this is the bind/idle pose straight off the import, since nothing else
+  // has touched this skeleton yet (the hostage is excluded from clip
+  // playback for as long as it stays on the floor — see agents.js). Held
+  // onto so standUp() below can put it back the moment the hostage is
+  // rescued and hand the rig to the normal clip path, instead of leaving it
+  // stuck in the floor pose while a clip tries to animate it.
+  const restPose = new Map();
+  for (const node of new Set(death.targetedAnimations.map((ta) => ta.target))) {
+    restPose.set(node, {
+      position: node.position.clone(),
+      rotationQuaternion: node.rotationQuaternion ? node.rotationQuaternion.clone() : null,
+      scaling: node.scaling.clone(),
+    });
+  }
+
   // Capture the last frame's pose, then stop the group and write the
   // captured values straight back onto the nodes. A merely-paused group is
   // not enough: anything downstream that later calls
@@ -85,4 +101,21 @@ export function layHostageOnFloor(figure, scene) {
   root.position.x -= hipsWorld.x - root.position.x;
   root.position.z -= hipsWorld.z - root.position.z;
   root.computeWorldMatrix(true);
+
+  return {
+    /** Put the pre-floor-pose values back on every node the floor pose
+     * touched, so the hostage's skeleton is a clean slate for whatever clip
+     * agents.js starts on it next — called once, the moment orders.js
+     * reports the squad reached the hostage. */
+    standUp() {
+      for (const [node, { position, rotationQuaternion, scaling }] of restPose) {
+        node.position.copyFrom(position);
+        if (rotationQuaternion) node.rotationQuaternion = rotationQuaternion;
+        node.scaling.copyFrom(scaling);
+      }
+      root.computeWorldMatrix(true);
+      skeleton.prepare(true);
+      skeleton.computeAbsoluteMatrices(true);
+    },
+  };
 }

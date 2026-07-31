@@ -107,7 +107,7 @@ async function repopulate() {
   // the generation this cast belongs to — a superseded call already bailed
   // out above without touching the binding.
   agentBinding?.dispose();
-  agentBinding = bindAgents(scene, world, cast);
+  agentBinding = bindAgents(scene, world, cast, orders);
   if (params.has('debug')) window.__raid.cast = cast;
 }
 

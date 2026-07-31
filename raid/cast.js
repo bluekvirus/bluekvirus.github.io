@@ -18,6 +18,7 @@
 // per-figure first.
 
 import { layHostageOnFloor } from './seated.js';
+import { facingToRotationY } from './facing.js';
 
 const ASSET_DIR = '../assets/quaternius/';
 
@@ -48,7 +49,12 @@ function place(template, spawn, name) {
   // clone's `.rotation.y` back out to derive the hostage's facing for its
   // pose. Switching this to a rotationQuaternion would leave `.rotation`
   // stale and silently break that pose with no error.
-  clone.rotation = new BABYLON.Vector3(0, spawn.facing ?? 0, 0);
+  //
+  // `facingToRotationY` converts the sim's direction-of-travel angle to the
+  // rotation.y this model actually needs — see facing.js for why a straight
+  // `spawn.facing` assignment here would spawn every figure facing exactly
+  // backward.
+  clone.rotation = new BABYLON.Vector3(0, facingToRotationY(spawn.facing ?? 0), 0);
 
   // Read the skeleton off the clone's own meshes rather than assuming it
   // matches the template's — see the note above on why that assumption
@@ -99,7 +105,11 @@ export async function populate(scene, mission, shadows) {
   // would start posing the wrong character the moment the model set or
   // import order changed.
   const hostage = figures.find((f) => f.role === 'hostage');
-  layHostageOnFloor(hostage, scene);
+  // `standUp` restores the pre-floor-pose bone values captured by
+  // layHostageOnFloor; agents.js calls it once the rescue actually happens
+  // (see its `hostageRescued` handling), so it needs to live on the figure
+  // agents.js already has a handle to, not just as a local here.
+  hostage.standUp = layHostageOnFloor(hostage, scene).standUp;
 
   return {
     figures,
