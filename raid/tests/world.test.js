@@ -36,14 +36,43 @@ test('the same seed replays identically', () => {
 test('agents never end a tick inside a blocked cell', () => {
   for (const seed of SEEDS.slice(0, 30)) {
     const w = build(seed);
-    // Send everyone somewhere far so they actually traverse the building.
-    for (const a of w.agents) w.setGoal(a.id, { x: -w.grid.originX, z: -w.grid.originZ });
+    const hostage = w.agents.find((a) => a.role === 'hostage');
+    // Send everyone toward the hostage so they actually traverse the
+    // building. (An earlier version of this test aimed at
+    // { x: -w.grid.originX, z: -w.grid.originZ }, which resolves to a cell
+    // one past the grid's valid range — setGoal failed for every agent, no
+    // one ever moved, and the assertion below could not have failed no
+    // matter what tick() did. Asserting setGoal's return value is what
+    // keeps that from happening silently again.)
+    for (const a of w.agents) {
+      const ok = w.setGoal(a.id, { x: hostage.x, z: hostage.z });
+      assert.ok(ok, `${seed}: setGoal failed for agent ${a.id}`);
+    }
     for (let i = 0; i < 900; i++) {
       w.tick();
       for (const a of w.agents) {
         const c = w.grid.worldToCell(a.x, a.z);
         assert.equal(w.grid.isBlocked(c.col, c.row), false,
           `${seed}: agent ${a.id} walked into geometry at tick ${i}`);
+      }
+    }
+  }
+});
+
+test('no agent is ever inside a closed door', () => {
+  for (const seed of SEEDS.slice(0, 30)) {
+    const w = build(seed);
+    const hostage = w.agents.find((a) => a.role === 'hostage');
+    for (const a of w.agents.filter((x) => x.role === 'swat')) {
+      w.setGoal(a.id, { x: hostage.x, z: hostage.z });
+    }
+    for (let i = 0; i < 3600; i++) {
+      w.tick();
+      for (const a of w.agents) {
+        const c = w.grid.worldToCell(a.x, a.z);
+        const id = w.grid.doorAt(c.col, c.row);
+        assert.ok(id < 0 || w.doors[id].state === 'open',
+          `${seed}: agent ${a.id} inside door ${id} while it is ${id >= 0 ? w.doors[id].state : 'n/a'} at tick ${i}`);
       }
     }
   }

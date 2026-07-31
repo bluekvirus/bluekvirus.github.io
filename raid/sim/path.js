@@ -92,15 +92,58 @@ export function findPath(grid, from, to, isDoorOpen) {
 }
 
 export function hasLineOfSight(grid, a, b, isDoorOpen) {
-  // Sample along the segment at half a cell. Finer than the grid, so a corner
-  // cannot be stepped over.
+  // Amanatides-Woo voxel traversal: walks every cell the segment actually
+  // enters, rather than sampling points along it. Point sampling — even at
+  // half a cell — can step clean over a corner a continuous line clips,
+  // approving a "shortcut" that a moving body cannot really take. This
+  // function backs both pathfinding's line-of-sight smoothing (a bad
+  // approval there jams a walking agent solid in a wall) and, in a later
+  // phase, ranged line of sight (a bad approval there is a bullet passing
+  // through a wall), so it has to be exact, not merely fine-grained.
+  const start = grid.worldToCell(a.x, a.z);
+  const end = grid.worldToCell(b.x, b.z);
+  if (!passable(grid, start.col, start.row, isDoorOpen)) return false;
+  if (!passable(grid, end.col, end.row, isDoorOpen)) return false;
+  if (start.col === end.col && start.row === end.row) return true;
+
   const dx = b.x - a.x;
   const dz = b.z - a.z;
-  const steps = Math.ceil(Math.hypot(dx, dz) / (grid.cell * 0.5));
-  for (let i = 0; i <= steps; i++) {
-    const t = steps === 0 ? 0 : i / steps;
-    const c = grid.worldToCell(a.x + dx * t, a.z + dz * t);
-    if (!passable(grid, c.col, c.row, isDoorOpen)) return false;
+  const stepCol = dx > 0 ? 1 : dx < 0 ? -1 : 0;
+  const stepRow = dz > 0 ? 1 : dz < 0 ? -1 : 0;
+
+  // A tie between the two axes' crossing distances means the segment passes
+  // exactly through a grid corner. Recomputing each crossing fresh from the
+  // endpoints (rather than accumulating `+= tDelta` step after step) keeps
+  // that comparison meaningful — an accumulated sum drifts by a few ULP over
+  // many steps, which is enough for a mathematically exact tie to stop
+  // reading as one right when it matters most.
+  const EPS = 1e-9;
+  const crossingX = (col) => (stepCol !== 0 ? (grid.originX + (col + (stepCol > 0 ? 1 : 0)) * grid.cell - a.x) / dx : Infinity);
+  const crossingZ = (row) => (stepRow !== 0 ? (grid.originZ + (row + (stepRow > 0 ? 1 : 0)) * grid.cell - a.z) / dz : Infinity);
+
+  let col = start.col;
+  let row = start.row;
+  // Bounded by the number of grid lines the segment can possibly cross;
+  // guards against a runaway loop if floating-point imprecision ever kept it
+  // from landing exactly on the end cell.
+  const maxSteps = Math.abs(end.col - start.col) + Math.abs(end.row - start.row) + 2;
+
+  for (let i = 0; i < maxSteps && (col !== end.col || row !== end.row); i++) {
+    const tMaxX = crossingX(col);
+    const tMaxZ = crossingZ(row);
+    if (Math.abs(tMaxX - tMaxZ) < EPS) {
+      // Crossing exactly through a corner: the line grazes both cells it
+      // passes between, so both must be open for it to really be clear.
+      if (!passable(grid, col + stepCol, row, isDoorOpen)) return false;
+      if (!passable(grid, col, row + stepRow, isDoorOpen)) return false;
+      col += stepCol;
+      row += stepRow;
+    } else if (tMaxX < tMaxZ) {
+      col += stepCol;
+    } else {
+      row += stepRow;
+    }
+    if (!passable(grid, col, row, isDoorOpen)) return false;
   }
   return true;
 }

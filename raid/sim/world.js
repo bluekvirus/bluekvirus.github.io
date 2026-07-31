@@ -99,16 +99,40 @@ export function createWorld(plan, mission, placements = []) {
     return true;
   };
 
+  // A closed (or still-opening) door counts as blocked here exactly like a
+  // wall. That is what makes "walk up to a shut door and wait" a physical
+  // guarantee rather than a distance-based approximation: stopping an agent
+  // because it is merely "close enough" to a door can itself land it inside
+  // the door's own tagged cell (door cells reach a little past the strict
+  // opening) while the door is still shut. Treating the cell as impassable
+  // until `isDoorOpen` says otherwise means the ordinary slide-per-axis
+  // recovery is what stops the agent, at the cell boundary, every time.
   const blockedAt = (x, z) => {
     const c = grid.worldToCell(x, z);
-    return grid.isBlocked(c.col, c.row);
+    if (grid.isBlocked(c.col, c.row)) return true;
+    const id = grid.doorAt(c.col, c.row);
+    return id >= 0 && !isDoorOpen(id);
   };
 
-  const doorBetween = (a, target) => {
-    const c = grid.worldToCell(target.x, target.z);
-    const id = grid.doorAt(c.col, c.row);
-    if (id < 0 || isDoorOpen(id)) return -1;
-    return id;
+  // Walk the whole segment from the agent's current position to `target` —
+  // not just target's own cell — at no coarser than half a cell, and return
+  // the id of the FIRST closed (or still-opening) door found along it.
+  // `setGoal` smooths with every door treated as open, so a doorway partway
+  // along a long straight segment is routinely erased as an explicit
+  // waypoint; checking only the waypoint's cell let an agent glide straight
+  // through a door that never actually opened.
+  const firstBlockingDoor = (a, target) => {
+    const dx = target.x - a.x;
+    const dz = target.z - a.z;
+    const dist = Math.hypot(dx, dz);
+    const steps = Math.max(1, Math.ceil(dist / (grid.cell * 0.5)));
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const c = grid.worldToCell(a.x + dx * t, a.z + dz * t);
+      const id = grid.doorAt(c.col, c.row);
+      if (id >= 0 && !isDoorOpen(id)) return id;
+    }
+    return -1;
   };
 
   // Re-path from wherever the agent actually is, deliberately WITHOUT the
@@ -161,37 +185,23 @@ export function createWorld(plan, mission, placements = []) {
         continue;
       }
 
-      // A shut door on the next waypoint: walk up to it, start it opening, and
-      // only actually stop once within reach — the door cell itself is never
-      // "blocked" in the nav grid (that is how a closed door differs from a
-      // wall), so nothing else would halt an agent short of it.
-      const blockingDoor = doorBetween(a, target);
-      let aimX = dx;
-      let aimZ = dz;
-      let aimDist = dist;
+      // A shut door anywhere between here and the next waypoint triggers
+      // itself opening once the agent is close enough to reach it — the
+      // collision check below (not this distance) is what actually stops
+      // the agent walking through it while shut, so there is no need to
+      // redirect steering at the door itself first: aiming straight at the
+      // real target and letting the blocked-cell slide halt the agent at
+      // the door is exactly how it already stops at an ordinary wall.
+      const blockingDoor = firstBlockingDoor(a, target);
       if (blockingDoor >= 0) {
-        a.waitingFor = blockingDoor;
         const door = doors[blockingDoor];
-        const doorDist = Math.hypot(door.x - a.x, door.z - a.z);
-        if (doorDist < SIM.doorReach) {
-          if (door.state === 'closed') door.state = 'opening';
-          a.vx = 0; a.vz = 0;
-          // Waiting on a door is not a jam: reset the window so the wait
-          // itself is never mistaken for one once the door opens.
-          a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW;
-          continue;
+        if (door.state === 'closed' && Math.hypot(door.x - a.x, door.z - a.z) < SIM.doorReach) {
+          door.state = 'opening';
         }
-        // Still approaching: aim at the door itself, not the far waypoint on
-        // the other side of it.
-        aimX = door.x - a.x;
-        aimZ = door.z - a.z;
-        aimDist = doorDist;
-      } else {
-        a.waitingFor = -1;
       }
 
-      let dirX = aimX / aimDist;
-      let dirZ = aimZ / aimDist;
+      let dirX = dx / dist;
+      let dirZ = dz / dist;
 
       // Separation, capped: it may nudge an agent aside in a doorway but must
       // never be strong enough to shove one through a wall.
@@ -217,30 +227,47 @@ export function createWorld(plan, mission, placements = []) {
       const speed = a.wants;
       const nx = a.x + dirX * speed * SIM.step;
       const nz = a.z + dirZ * speed * SIM.step;
+      const beforeX = a.x;
+      const beforeZ = a.z;
 
       // Integrate, then verify. Sliding along a blocked axis keeps an agent
-      // moving past a corner instead of jamming against it.
+      // moving past a corner instead of jamming against it — and, since a
+      // shut door counts as blocked too, is what actually stops an agent at
+      // one rather than the door-approach distance check above.
       if (!blockedAt(nx, nz)) { a.x = nx; a.z = nz; }
       else if (!blockedAt(nx, a.z)) { a.x = nx; }
       else if (!blockedAt(a.x, nz)) { a.z = nz; }
 
-      // Both slide attempts can still fail at a tight corner the smoothed
-      // path clips (arriving within `arriveRadius` of one waypoint can leave
-      // the agent off the exact line to the next, wedged against a wall it
-      // then creeps along without ever actually clearing). Checked over a
-      // half-second window rather than tick to tick, so this only fires on a
-      // genuine jam and never on the ordinary give-and-take of separation
-      // among crowded agents.
-      a._stallCountdown--;
-      if (a._stallCountdown <= 0) {
-        const progressed = Math.hypot(a.x - a._stallX, a.z - a._stallZ);
-        const expected = speed * SIM.step * STALL_WINDOW;
-        if (expected > 0 && progressed < expected * STALL_FRACTION) replan(a);
+      const moved = Math.hypot(a.x - beforeX, a.z - beforeZ);
+
+      if (blockingDoor >= 0 && !isDoorOpen(blockingDoor) && moved < 1e-9) {
+        // Genuinely waiting on a shut door, not jammed against geometry:
+        // report it, and reset the stall window so the wait itself is never
+        // mistaken for a jam once the door opens.
+        a.waitingFor = blockingDoor;
         a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW;
+      } else {
+        a.waitingFor = -1;
+        // Both slide attempts can still fail at a tight corner the smoothed
+        // path clips (arriving within `arriveRadius` of one waypoint can
+        // leave the agent off the exact line to the next, wedged against a
+        // wall it then creeps along without ever actually clearing).
+        // Checked over a half-second window rather than tick to tick, so
+        // this only fires on a genuine jam and never on the ordinary
+        // give-and-take of separation among crowded agents.
+        a._stallCountdown--;
+        if (a._stallCountdown <= 0) {
+          const progressed = Math.hypot(a.x - a._stallX, a.z - a._stallZ);
+          const expected = speed * SIM.step * STALL_WINDOW;
+          if (expected > 0 && progressed < expected * STALL_FRACTION) replan(a);
+          a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW;
+        }
       }
 
-      a.vx = dirX * speed;
-      a.vz = dirZ * speed;
+      // Velocity reflects actual displacement, not intent: an agent halted
+      // at a shut door or jammed against a corner is not "walking in place".
+      a.vx = (a.x - beforeX) / SIM.step;
+      a.vz = (a.z - beforeZ) / SIM.step;
       a.speed = Math.hypot(a.vx, a.vz);
 
       const want = Math.atan2(dirX, dirZ);
