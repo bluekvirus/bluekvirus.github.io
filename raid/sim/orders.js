@@ -81,7 +81,30 @@ export function createOrders(plan, mission) {
     phase: 'advance',
     leg: 0,
     issued: false,
+    issueQueue: null, // pending {agent, point} setGoal calls for the current leg, staggered one per tick
+    issueOk: true,
     patrol: new Map(), // agentId -> seconds until the next patrol goal
+  };
+
+  // A route-leg transition used to fire every squad member's setGoal call on
+  // the very same tick — up to four full A* queries landing in one tick,
+  // which is what blew the per-tick performance budget (see
+  // simbudget.test.js). Issuing one setGoal per tick instead spreads that
+  // cost out without changing what is asked for, in what order, or the
+  // retry-until-everyone-has-a-route contract `state.issued` implements.
+  const stageIssue = (world, tasks) => {
+    if (!state.issueQueue) {
+      state.issueQueue = tasks;
+      state.issueOk = true;
+    }
+    if (state.issueQueue.length) {
+      const { agent, point } = state.issueQueue.shift();
+      state.issueOk = world.setGoal(agent.id, nearestWalkable(world.grid, point.x, point.z)) && state.issueOk;
+    }
+    if (!state.issueQueue.length) {
+      state.issued = state.issueOk;
+      state.issueQueue = null;
+    }
   };
 
   const api = {
@@ -114,15 +137,13 @@ export function createOrders(plan, mission) {
           // this phase would then wait on an "allThere" check nothing can satisfy.
           // Each member gets its own spot around the room's centre rather than
           // the identical coordinate (see formationPoint above).
-          state.issued = swat.reduce((ok, a, i) => {
-            const point = formationPoint(centre, i, swat.length);
-            return world.setGoal(a.id, nearestWalkable(world.grid, point.x, point.z)) && ok;
-          }, true);
+          stageIssue(world, swat.map((a, i) => ({ agent: a, point: formationPoint(centre, i, swat.length) })));
         }
         const allThere = swat.every((a) => Math.hypot(a.x - centre.x, a.z - centre.z) < ARRIVED + 1.2);
         if (allThere) {
           state.leg++;
           state.issued = false;
+          state.issueQueue = null;
           if (state.leg >= route.length) { state.phase = 'rescue'; }
         }
         return;
@@ -132,6 +153,7 @@ export function createOrders(plan, mission) {
         // The hostage joins the squad and they all head for extraction.
         state.phase = 'extract';
         state.issued = false;
+        state.issueQueue = null;
         return;
       }
 
@@ -143,14 +165,10 @@ export function createOrders(plan, mission) {
         // SWAT member happens to arrive alongside it.
         const total = swat.length + 1;
         if (!state.issued) {
-          const swatOk = swat.reduce((ok, a, i) => {
-            const point = formationPoint(exit, i, total);
-            return world.setGoal(a.id, nearestWalkable(world.grid, point.x, point.z)) && ok;
-          }, true);
-          const hostagePoint = formationPoint(exit, swat.length, total);
-          const hostageOk = world.setGoal(hostage.id, nearestWalkable(world.grid, hostagePoint.x, hostagePoint.z));
+          const tasks = swat.map((a, i) => ({ agent: a, point: formationPoint(exit, i, total) }));
+          tasks.push({ agent: hostage, point: formationPoint(exit, swat.length, total) });
           hostage.wants = 1.4;
-          state.issued = swatOk && hostageOk;
+          stageIssue(world, tasks);
         }
         const out = [...swat, hostage].every((a) => Math.hypot(a.x - exit.x, a.z - exit.z) < 3);
         if (out) state.phase = 'done';

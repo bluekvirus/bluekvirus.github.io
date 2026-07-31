@@ -6,8 +6,8 @@
 
 const SQRT2 = Math.SQRT2;
 
-// 8-connected. Diagonals are last so that, at equal cost, the tie-break in the
-// open set prefers straight moves — paths come out visibly tidier.
+// 8-connected. Diagonals are last purely for readability; the open set below
+// no longer takes insertion order into account for ties (see OpenHeap).
 const NEIGHBOURS = [
   [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
   [1, 1, SQRT2], [1, -1, SQRT2], [-1, 1, SQRT2], [-1, -1, SQRT2],
@@ -18,6 +18,78 @@ const passable = (grid, col, row, isDoorOpen) => {
   const id = grid.doorAt(col, row);
   return id < 0 || isDoorOpen(id);
 };
+
+// Binary min-heap keyed on f, with the cell index as an explicit tie-break.
+// A plain array scanned linearly on every pop (the previous approach) is
+// O(n) per pop over a ~140x140 grid, which is what blew the per-tick budget
+// once several agents queried a path on the same tick. A heap makes push and
+// pop both O(log n) — but a heap's sift only guarantees *a* minimum comes out
+// first, not which of several equal-f entries; left to the swaps, that order
+// depends on incidental insertion history and is not guaranteed to repeat
+// identically across runs. The idx tie-break gives every pop a single,
+// reproducible answer regardless of how entries were shuffled to get there,
+// which is what this simulation's replay guarantee depends on.
+class OpenHeap {
+  constructor() {
+    this.f = [];
+    this.idx = [];
+  }
+
+  get size() { return this.f.length; }
+
+  push(idx, f) {
+    const i = this.f.length;
+    this.f.push(f);
+    this.idx.push(idx);
+    this.#siftUp(i);
+  }
+
+  // Returns just the popped index — every caller here only ever needs that,
+  // and a query touches this often enough that skipping the {idx, f} wrapper
+  // object avoids a real amount of otherwise-pointless allocation.
+  pop() {
+    const topIdx = this.idx[0];
+    const last = this.f.length - 1;
+    this.f[0] = this.f[last];
+    this.idx[0] = this.idx[last];
+    this.f.pop();
+    this.idx.pop();
+    if (this.f.length) this.#siftDown(0);
+    return topIdx;
+  }
+
+  #less(a, b) {
+    return this.f[a] < this.f[b] || (this.f[a] === this.f[b] && this.idx[a] < this.idx[b]);
+  }
+
+  #swap(a, b) {
+    let t = this.f[a]; this.f[a] = this.f[b]; this.f[b] = t;
+    t = this.idx[a]; this.idx[a] = this.idx[b]; this.idx[b] = t;
+  }
+
+  #siftUp(i) {
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (!this.#less(i, parent)) break;
+      this.#swap(i, parent);
+      i = parent;
+    }
+  }
+
+  #siftDown(i) {
+    const n = this.f.length;
+    for (;;) {
+      let smallest = i;
+      const l = 2 * i + 1;
+      const r = 2 * i + 2;
+      if (l < n && this.#less(l, smallest)) smallest = l;
+      if (r < n && this.#less(r, smallest)) smallest = r;
+      if (smallest === i) break;
+      this.#swap(i, smallest);
+      i = smallest;
+    }
+  }
+}
 
 export function findPath(grid, from, to, isDoorOpen) {
   const start = grid.worldToCell(from.x, from.z);
@@ -35,9 +107,8 @@ export function findPath(grid, from, to, isDoorOpen) {
   const closed = new Uint8Array(size);
   gScore[startIdx] = 0;
 
-  // A plain array used as a priority queue. The grid is ~20k cells and a query
-  // touches a small fraction of it, so a binary heap is not worth the code.
-  const openList = [{ idx: startIdx, f: 0 }];
+  const openList = new OpenHeap();
+  openList.push(startIdx, 0);
 
   const heuristic = (col, row) => {
     const dc = Math.abs(col - goal.col);
@@ -46,10 +117,8 @@ export function findPath(grid, from, to, isDoorOpen) {
     return (dc + dr) + (SQRT2 - 2) * Math.min(dc, dr);
   };
 
-  while (openList.length) {
-    let best = 0;
-    for (let i = 1; i < openList.length; i++) if (openList[i].f < openList[best].f) best = i;
-    const { idx } = openList.splice(best, 1)[0];
+  while (openList.size) {
+    const idx = openList.pop();
     if (idx === goalIdx) break;
     if (closed[idx]) continue;
     closed[idx] = 1;
@@ -74,7 +143,7 @@ export function findPath(grid, from, to, isDoorOpen) {
       if (tentative < gScore[nIdx]) {
         gScore[nIdx] = tentative;
         cameFrom[nIdx] = idx;
-        openList.push({ idx: nIdx, f: tentative + heuristic(nc, nr) });
+        openList.push(nIdx, tentative + heuristic(nc, nr));
       }
     }
   }
