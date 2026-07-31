@@ -190,7 +190,19 @@ export function createOrders(plan, mission) {
         for (const a of swat) a.wants = SIM.runSpeed;
         const centre = centreOf(route[state.leg]);
         state.legTicks++;
-        if (state.issued && state.legTicks > LEG_TIMEOUT) {
+        // Gated on `state.legTicks` alone, deliberately NOT on `state.issued`.
+        // This watchdog exists precisely for the case where issuing itself is
+        // what is failing — a squad member standing on a perfectly open cell
+        // whose *destination* this leg happens to be unreachable from (a
+        // formation point that lands across a sealed corridor, say) never
+        // gets `setGoal` to succeed, so `state.issued` never becomes true.
+        // Requiring it here as well would make the one thing meant to bound
+        // this failure depend on the failure not happening — a guard gated on
+        // the thing it is supposed to guard against, which cannot ever fire.
+        // `state.legTicks` — simulated ticks, counted every update() call
+        // regardless of anything else in this phase — elapses whether or not
+        // issuing is succeeding, so that is what this is keyed on instead.
+        if (state.legTicks > LEG_TIMEOUT) {
           state.reissues++;
           if (state.reissues > LEG_MAX_REISSUES) {
             // Stop waiting for whoever is not coming. The next leg's goals
@@ -248,8 +260,13 @@ export function createOrders(plan, mission) {
         // SWAT member happens to arrive alongside it.
         const total = swat.length + 1;
         state.legTicks++;
-        // Re-issue only — never a way out of the arrival check itself.
-        if (state.issued && state.legTicks > LEG_TIMEOUT) { state.reissues++; restartLeg(); }
+        // Re-issue only — never a way out of the arrival check itself. Gated
+        // on ticks alone, not on `state.issued`, for the same reason as the
+        // advance-phase watchdog above: `state.issued` is exactly what a
+        // permanently-failing `setGoal` prevents from ever becoming true, so
+        // requiring it here too would make this restart unable to fire in
+        // the one case it exists for.
+        if (state.legTicks > LEG_TIMEOUT) { state.reissues++; restartLeg(); }
         if (!state.issued) {
           const tasks = swat.map((a, i) => ({ agent: a, point: formationPoint(exit, i, total) }));
           tasks.push({ agent: hostage, point: formationPoint(exit, swat.length, total) });
