@@ -46,17 +46,30 @@ export function bindAgents(scene, world, cast) {
 
   // Ramps `rig` toward playing `name` at full weight, fading everything else
   // on the same rig out, over BLEND seconds of real elapsed time (`dt`,
-  // seconds). Every group's weight is driven independently toward its own
-  // target (1 for `name`, 0 for the rest) rather than tracking a single
-  // in-flight pair, so a clip change that lands mid-fade cannot leave three
-  // groups weighted: the newly-desired clip simply becomes the one target
-  // weight 1, whatever was fading in before now fades back out from wherever
-  // its weight had gotten to, and whatever was already fading out keeps
-  // fading out unchanged. Both groups involved in the transition are kept
-  // playing (with Babylon actually blending their sampled poses by weight —
-  // verified directly against this project's pinned Babylon 9.18.1, see the
-  // Task 6 fix report) until a group's weight reaches exactly 0, at which
-  // point it is stopped so it does not sit there evaluating for nothing.
+  // seconds). Every group's RAW weight is driven independently toward its
+  // own target (1 for `name`, 0 for the rest) rather than tracking a single
+  // in-flight pair, so a retarget that lands before the previous fade
+  // finished does not need to be detected or handled specially — it is just
+  // a new target for the per-group ramp to head toward.
+  //
+  // That independence is exactly why a naive "apply the raw weight directly"
+  // version is wrong: two retargets inside one BLEND window (e.g. Run
+  // requested while Idle->Walk was still mid-fade — a routine deceleration
+  // through Run -> Walk -> Idle causes this, not an edge case) can leave
+  // three raw weights simultaneously nonzero, e.g. 0.4/0.2/0.2, summing to
+  // 0.8 rather than 1 — a visibly mis-weighted three-way blend rather than a
+  // clean cross-fade. So the raw per-group ramp above is a bookkeeping step
+  // only: what is actually handed to Babylon is renormalised every call so
+  // the currently-playing groups' weights always sum to exactly 1, however
+  // many of them are mid-fade and whatever `dt` arrives. This is robust to
+  // any number of in-flight groups (three, four, a chain of retargets), not
+  // just two, which is what makes it safe against a `dt`/retarget timing the
+  // caller cannot control. Babylon genuinely blends by weight — verified
+  // directly against this project's pinned Babylon 9.18.1, see the Task 6
+  // fix report — so a normalised three-way split still renders as a single
+  // coherent pose, just briefly a three-way rather than two-way mix. A group
+  // is only stopped once its RAW weight reaches exactly 0 (never based on
+  // its post-normalisation value), so it never snaps to bind pose mid-fade.
   const crossfade = (rig, name, dt) => {
     if (!rig.started) {
       // Nothing has ever played on this rig: snap straight to the first
@@ -87,11 +100,20 @@ export function bindAgents(scene, world, cast) {
       }
       w = target === 1 ? Math.min(1, w + step) : Math.max(0, w - step);
       rig.weight[n] = w;
-      g.setWeightForAllAnimatables(w);
       if (w === 0 && rig.playing.has(n)) {
         g.stop();
         rig.playing.delete(n);
       }
+    }
+
+    // Renormalise so whatever is actually playing always sums to weight 1
+    // — see the block comment above for why the raw per-group ramp above
+    // cannot be handed to Babylon directly.
+    let sum = 0;
+    for (const n of Object.keys(rig.groups)) sum += rig.weight[n];
+    for (const [n, g] of Object.entries(rig.groups)) {
+      if (!g || !rig.playing.has(n)) continue;
+      g.setWeightForAllAnimatables(sum > 0 ? rig.weight[n] / sum : 0);
     }
   };
 
