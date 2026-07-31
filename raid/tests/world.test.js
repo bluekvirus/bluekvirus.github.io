@@ -119,3 +119,75 @@ test('agents keep apart', () => {
 test('SIM constants are frozen', () => {
   assert.throws(() => { SIM.step = 1; });
 });
+
+test('a wall-corner jam still recovers via replan even with a closed door further along the same segment', () => {
+  // Regression for fix round 2: door detection used to scan the WHOLE
+  // segment from an agent's position to its next waypoint
+  // (`firstBlockingDoor`), so a closed door metres away on a long smoothed
+  // segment could be "found" and misreported as what was stopping an agent
+  // that was actually jammed at a wall corner right in front of it. Worse,
+  // finding that door reset the stall countdown every tick, so the stall
+  // detector's replan() never got a chance to run — the agent froze in the
+  // pocket forever, misclassified as waiting on a door it was nowhere near.
+  //
+  // Reproducing that shape from a generated seed is impractical (pathfinding
+  // naturally routes around a wall corner rather than aiming straight at
+  // one), so this builds a small hand-made grid instead: two full-length
+  // walls meeting at a right angle seal one corner of an open room into a
+  // pocket with no way out, and a door is tagged well past that corner, on
+  // the straight line from the pocket to a far "goal" on the other side.
+  // The agent's path is set directly to that far goal — simulating exactly
+  // the kind of long, straight, single-waypoint segment smoothPath
+  // produces — so it drives straight at the sealed corner.
+  const plan = {
+    seed: 'corner-jam-regression',
+    config: { wallThickness: 0.1 },
+    bounds: { x: 0, z: 0, w: 6, d: 6 },
+    cells: [{ x: 0, z: 0, w: 6, d: 6 }],
+    doors: [{ id: 0, x: 4.5, z: 4.5, axis: 'x', width: 1 }],
+    adjacency: {},
+    walls: [],
+  };
+  const placements = [
+    // Full-height vertical wall at x in [3, 3.25].
+    { x: 3.125, z: 3, w: 0.25, d: 6 },
+    // Full-width horizontal wall at z in [3, 3.25].
+    { x: 3, z: 3.125, w: 6, d: 0.25 },
+  ];
+  const mission = {
+    spawns: {
+      swat: [{ x: 2.9, z: 2.9, facing: 0, cellId: 0 }],
+      hostiles: [],
+      hostage: { x: 0.5, z: 0.5, facing: 0, cellId: 0 },
+      extraction: { x: 0.5, z: 0.5 },
+    },
+  };
+
+  const w = createWorld(plan, mission, placements);
+  const a = w.agents[0];
+
+  // Force the exact pathological state directly rather than hope
+  // pathfinding produces it: a single waypoint far across the sealed
+  // corner. The straight line from the agent to it passes through door 0's
+  // tagged region (around x/z 4.0-5.0), well past the corner at x/z
+  // 3.0-3.25 that is what actually traps the agent.
+  a.goal = { x: 5.5, z: 5.5 };
+  a.path = [{ x: 5.5, z: 5.5 }];
+  a.pathIndex = 0;
+  const originalPath = a.path;
+
+  let everMisreportedWaitingOnDoor = false;
+  let maxX = a.x;
+  for (let i = 0; i < 150; i++) {
+    w.tick();
+    if (a.waitingFor === 0) everMisreportedWaitingOnDoor = true;
+    if (a.x > maxX) maxX = a.x;
+  }
+
+  assert.equal(everMisreportedWaitingOnDoor, false,
+    'agent was reported as waiting on the door 1.5m+ away instead of stalled at the wall corner right in front of it');
+  assert.ok(maxX < 3.3,
+    `agent escaped the sealed pocket (reached x=${maxX.toFixed(3)}) — the corner was not actually trapping it, so this test proves nothing`);
+  assert.notEqual(a.path, originalPath,
+    'the stall never triggered replan() — the agent is frozen, having mistaken the distant door for what is jamming it');
+});

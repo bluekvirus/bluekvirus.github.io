@@ -63,10 +63,13 @@ export function createWorld(plan, mission, placements = []) {
       wants: role === 'hostage' ? 0 : SIM.walkSpeed,
       // Internal bookkeeping, not part of the public Agent shape: a rolling
       // checkpoint used to notice when an agent is barely crawling despite
-      // wanting to move (see the stall check in tick()).
+      // wanting to move, and whether anything in the current window was
+      // actually a wall refusing it, rather than mutual give-and-take with
+      // other agents (see the stall check in tick()).
       _stallX: spawn.x,
       _stallZ: spawn.z,
       _stallCountdown: STALL_WINDOW,
+      _stallSawWall: false,
     });
   };
   mission.spawns.swat.forEach((s) => add('swat', s));
@@ -99,54 +102,34 @@ export function createWorld(plan, mission, placements = []) {
     return true;
   };
 
-  // A closed (or still-opening) door counts as blocked here exactly like a
-  // wall. That is what makes "walk up to a shut door and wait" a physical
-  // guarantee rather than a distance-based approximation: stopping an agent
-  // because it is merely "close enough" to a door can itself land it inside
-  // the door's own tagged cell (door cells reach a little past the strict
-  // opening) while the door is still shut. Treating the cell as impassable
-  // until `isDoorOpen` says otherwise means the ordinary slide-per-axis
-  // recovery is what stops the agent, at the cell boundary, every time.
-  const blockedAt = (x, z) => {
+  // What refuses a proposed move into (x, z): a wall, a specific shut door,
+  // or nothing. A closed (or still-opening) door counts as blocked exactly
+  // like a wall — that is what makes "walk up to a shut door and wait" a
+  // physical guarantee rather than a distance-based approximation, and
+  // reporting which door (if any) is what lets a stalled step be classified
+  // by what actually stopped it, rather than by scanning ahead for any
+  // closed door that happens to sit somewhere further down the smoothed
+  // route (see the classification in tick(), and the regression test for
+  // why that distinction matters).
+  const refusalAt = (x, z) => {
     const c = grid.worldToCell(x, z);
-    if (grid.isBlocked(c.col, c.row)) return true;
+    if (grid.isBlocked(c.col, c.row)) return { blocked: true, doorId: -1 };
     const id = grid.doorAt(c.col, c.row);
-    return id >= 0 && !isDoorOpen(id);
+    if (id >= 0 && !isDoorOpen(id)) return { blocked: true, doorId: id };
+    return { blocked: false, doorId: -1 };
   };
-
-  // Walk the whole segment from the agent's current position to `target` —
-  // not just target's own cell — at no coarser than half a cell, and return
-  // the id of the FIRST closed (or still-opening) door found along it.
-  // `setGoal` smooths with every door treated as open, so a doorway partway
-  // along a long straight segment is routinely erased as an explicit
-  // waypoint; checking only the waypoint's cell let an agent glide straight
-  // through a door that never actually opened.
-  const firstBlockingDoor = (a, target) => {
-    const dx = target.x - a.x;
-    const dz = target.z - a.z;
-    const dist = Math.hypot(dx, dz);
-    const steps = Math.max(1, Math.ceil(dist / (grid.cell * 0.5)));
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      const c = grid.worldToCell(a.x + dx * t, a.z + dz * t);
-      const id = grid.doorAt(c.col, c.row);
-      if (id >= 0 && !isDoorOpen(id)) return id;
-    }
-    return -1;
-  };
+  const blockedAt = (x, z) => refusalAt(x, z).blocked;
 
   // Re-path from wherever the agent actually is, deliberately WITHOUT the
-  // smoothing pass. A shortcut is exactly what jams an agent solid in the
-  // first place: smoothPath's line-of-sight check samples every half-cell,
-  // coarse enough to pronounce a shortcut clear when it grazes a prop or
-  // wall corner between samples, and the same start position would smooth
-  // to the same clipping shortcut every time — replanning with smoothing
-  // would just reproduce the jam it is meant to fix. The raw cell-to-cell
-  // route has no shortcuts to clip a corner with, only single-cell steps the
-  // integrate-then-verify slide can always make. This is only ever reached
-  // after the stall counter below trips, never pre-emptively, so it cannot
-  // thrash: it fires once per genuine jam, not once per door toggle or once
-  // per tick.
+  // smoothing pass. `hasLineOfSight` (path.js) is an exact cell traversal
+  // now, not the point sample it used to be, so a shortcut it approves can
+  // no longer be what clips a corner — but the raw, single-cell-step route
+  // is still what recovers fastest from a genuine jam, since it never has
+  // to re-derive a shortcut at all. This is only ever reached after the
+  // stall counter below trips, and only once real wall evidence has been
+  // seen (not merely low net progress — see that check), so it cannot
+  // thrash: it fires once per genuine jam, not once per door toggle, once
+  // per tick, or once per bout of ordinary crowding near a shared goal.
   const replan = (a) => {
     if (!a.goal) return false;
     const raw = findPath(grid, a, a.goal, () => true);
@@ -170,7 +153,7 @@ export function createWorld(plan, mission, placements = []) {
       a.speed = 0;
       if (!a.path || a.pathIndex >= a.path.length) {
         a.vx = 0; a.vz = 0;
-        a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW;
+        a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW; a._stallSawWall = false;
         continue;
       }
 
@@ -183,21 +166,6 @@ export function createWorld(plan, mission, placements = []) {
         a.pathIndex++;
         if (a.pathIndex >= a.path.length) { a.path = null; a.goal = null; a.vx = 0; a.vz = 0; }
         continue;
-      }
-
-      // A shut door anywhere between here and the next waypoint triggers
-      // itself opening once the agent is close enough to reach it — the
-      // collision check below (not this distance) is what actually stops
-      // the agent walking through it while shut, so there is no need to
-      // redirect steering at the door itself first: aiming straight at the
-      // real target and letting the blocked-cell slide halt the agent at
-      // the door is exactly how it already stops at an ordinary wall.
-      const blockingDoor = firstBlockingDoor(a, target);
-      if (blockingDoor >= 0) {
-        const door = doors[blockingDoor];
-        if (door.state === 'closed' && Math.hypot(door.x - a.x, door.z - a.z) < SIM.doorReach) {
-          door.state = 'opening';
-        }
       }
 
       let dirX = dx / dist;
@@ -233,34 +201,74 @@ export function createWorld(plan, mission, placements = []) {
       // Integrate, then verify. Sliding along a blocked axis keeps an agent
       // moving past a corner instead of jamming against it — and, since a
       // shut door counts as blocked too, is what actually stops an agent at
-      // one rather than the door-approach distance check above.
-      if (!blockedAt(nx, nz)) { a.x = nx; a.z = nz; }
-      else if (!blockedAt(nx, a.z)) { a.x = nx; }
-      else if (!blockedAt(a.x, nz)) { a.z = nz; }
+      // one. Each attempt's refusal reason is kept (only computed if the
+      // previous attempt failed, same short-circuiting as before) so that,
+      // if the agent ends up not moving at all, classification below can ask
+      // what actually refused THIS step rather than scanning ahead for any
+      // closed door on the smoothed route — a door metres away on the same
+      // segment as a genuine wall-corner jam is not what is stopping the
+      // agent, and must not be reported, or mistaken, as such.
+      const primary = refusalAt(nx, nz);
+
+      // A shut door directly ahead starts opening once in reach, regardless
+      // of whether this particular step actually moves the agent. Tying
+      // this to "did the agent fully stop" instead would deadlock a crowd
+      // at a doorway forever: several agents jostling for the same narrow
+      // opening can perpetually find SOME sliding movement via separation,
+      // never fully stopping, so the door would never be told to open at
+      // all and nobody would ever get through.
+      if (primary.doorId >= 0) {
+        const door = doors[primary.doorId];
+        if (door.state === 'closed' && Math.hypot(door.x - a.x, door.z - a.z) < SIM.doorReach) {
+          door.state = 'opening';
+        }
+      }
+
+      const slideX = primary.blocked ? refusalAt(nx, a.z) : null;
+      const slideZ = (slideX && slideX.blocked) ? refusalAt(a.x, nz) : null;
+
+      if (!primary.blocked) { a.x = nx; a.z = nz; }
+      else if (!slideX.blocked) { a.x = nx; }
+      else if (!slideZ.blocked) { a.z = nz; }
 
       const moved = Math.hypot(a.x - beforeX, a.z - beforeZ);
+      const refusedByDoor = moved < 1e-9
+        ? [primary, slideX, slideZ].find((r) => r && r.doorId >= 0)
+        : undefined;
 
-      if (blockingDoor >= 0 && !isDoorOpen(blockingDoor) && moved < 1e-9) {
-        // Genuinely waiting on a shut door, not jammed against geometry:
-        // report it, and reset the stall window so the wait itself is never
-        // mistaken for a jam once the door opens.
-        a.waitingFor = blockingDoor;
-        a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW;
+      if (refusedByDoor) {
+        // Genuinely refused by a shut door right here, not jammed against a
+        // wall: report it (the door itself is already nudged open above,
+        // if in reach), and reset the stall window so the wait itself is
+        // never mistaken for a jam once the door opens.
+        a.waitingFor = refusedByDoor.doorId;
+        a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW; a._stallSawWall = false;
       } else {
         a.waitingFor = -1;
+        // The primary (most direct) step being refused — by a wall, or by a
+        // door not yet close enough to be worth opening — is evidence for
+        // this window, even on a tick where a fallback slide still lands
+        // some partial, nonzero progress; that is exactly the "creeps along
+        // a wall without ever truly clearing it" case this detector exists
+        // to catch. A tick where nothing was refused at all but the agent
+        // still barely moved is not: every crowded agent converging on one
+        // point eventually decelerates to a near-standstill purely from
+        // mutual separation, on perfectly open floor, and that alone must
+        // not justify a re-path.
+        if (primary.blocked) a._stallSawWall = true;
+
         // Both slide attempts can still fail at a tight corner the smoothed
         // path clips (arriving within `arriveRadius` of one waypoint can
         // leave the agent off the exact line to the next, wedged against a
         // wall it then creeps along without ever actually clearing).
         // Checked over a half-second window rather than tick to tick, so
-        // this only fires on a genuine jam and never on the ordinary
-        // give-and-take of separation among crowded agents.
+        // this only fires on a genuine jam.
         a._stallCountdown--;
         if (a._stallCountdown <= 0) {
           const progressed = Math.hypot(a.x - a._stallX, a.z - a._stallZ);
           const expected = speed * SIM.step * STALL_WINDOW;
-          if (expected > 0 && progressed < expected * STALL_FRACTION) replan(a);
-          a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW;
+          if (a._stallSawWall && expected > 0 && progressed < expected * STALL_FRACTION) replan(a);
+          a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW; a._stallSawWall = false;
         }
       }
 
