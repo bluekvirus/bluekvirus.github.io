@@ -9,6 +9,7 @@ import { makeRng } from '../rng.js';
 
 const ARRIVED = 1.4;      // how close counts as "at" a room or point
 const PATROL_PAUSE = 2.5; // seconds a hostile waits before picking a new spot
+const FORMATION_RADIUS = 0.8; // metres each squad member's destination sits off the shared point
 
 export function createOrders(plan, mission) {
   const rng = makeRng(`${plan.seed}:orders`);
@@ -59,6 +60,23 @@ export function createOrders(plan, mission) {
     return { x, z };
   };
 
+  // Sending every agent to the exact same coordinate is what lets several of
+  // them stack on one point: with everyone pulled toward the same spot, a
+  // goal-pull vector can cancel a separation-push vector exactly (or a step
+  // lands back on the agent's own already-open cell), and an agent can end
+  // up permanently unable to tell it isn't making progress. Spreading the
+  // squad's individual destinations around the shared point — evenly, by a
+  // fixed slot index, never Math.random — removes the identical-coordinate
+  // case entirely, and incidentally looks like a squad taking up positions
+  // rather than a stack of figures on a single tile.
+  const formationPoint = (centre, slot, total) => {
+    const angle = (slot / total) * Math.PI * 2;
+    return {
+      x: centre.x + Math.cos(angle) * FORMATION_RADIUS,
+      z: centre.z + Math.sin(angle) * FORMATION_RADIUS,
+    };
+  };
+
   const state = {
     phase: 'advance',
     leg: 0,
@@ -90,14 +108,18 @@ export function createOrders(plan, mission) {
 
       if (state.phase === 'advance') {
         const centre = centreOf(route[state.leg]);
-        const target = nearestWalkable(world.grid, centre.x, centre.z);
         if (!state.issued) {
           // Only counted as issued once every SWAT member actually got a route —
           // a failed setGoal leaves that agent's path null forever otherwise, and
           // this phase would then wait on an "allThere" check nothing can satisfy.
-          state.issued = swat.reduce((ok, a) => world.setGoal(a.id, target) && ok, true);
+          // Each member gets its own spot around the room's centre rather than
+          // the identical coordinate (see formationPoint above).
+          state.issued = swat.reduce((ok, a, i) => {
+            const point = formationPoint(centre, i, swat.length);
+            return world.setGoal(a.id, nearestWalkable(world.grid, point.x, point.z)) && ok;
+          }, true);
         }
-        const allThere = swat.every((a) => Math.hypot(a.x - target.x, a.z - target.z) < ARRIVED + 1.2);
+        const allThere = swat.every((a) => Math.hypot(a.x - centre.x, a.z - centre.z) < ARRIVED + 1.2);
         if (allThere) {
           state.leg++;
           state.issued = false;
@@ -115,10 +137,18 @@ export function createOrders(plan, mission) {
 
       if (state.phase === 'extract') {
         const exit = mission.spawns.extraction;
-        const target = nearestWalkable(world.grid, exit.x, exit.z);
+        // The squad plus the rescued hostage: one more formation slot than
+        // the advance phase used, so the hostage gets its own spot too
+        // instead of sharing the exact extraction coordinate with whichever
+        // SWAT member happens to arrive alongside it.
+        const total = swat.length + 1;
         if (!state.issued) {
-          const swatOk = swat.reduce((ok, a) => world.setGoal(a.id, target) && ok, true);
-          const hostageOk = world.setGoal(hostage.id, target);
+          const swatOk = swat.reduce((ok, a, i) => {
+            const point = formationPoint(exit, i, total);
+            return world.setGoal(a.id, nearestWalkable(world.grid, point.x, point.z)) && ok;
+          }, true);
+          const hostagePoint = formationPoint(exit, swat.length, total);
+          const hostageOk = world.setGoal(hostage.id, nearestWalkable(world.grid, hostagePoint.x, hostagePoint.z));
           hostage.wants = 1.4;
           state.issued = swatOk && hostageOk;
         }

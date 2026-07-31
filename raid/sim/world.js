@@ -31,6 +31,19 @@ const round = (v) => Math.round(v * 1e4) / 1e4;
 const STALL_WINDOW = 30;
 const STALL_FRACTION = 0.2;
 
+// A second, independent stall signal: has the agent gotten meaningfully
+// closer to its current waypoint at all in the last GOAL_STALL_WINDOW
+// ticks? Unlike the wall-evidence check above, this does not care whether
+// `refusalAt` ever reported anything blocked — several agents converging
+// on one shared point can have their goal-pull and separation-push vectors
+// cancel to exactly zero, or land back on their own already-open cell,
+// which reports as "not blocked" forever while genuinely never getting an
+// inch closer. Comfortably above the ~25 ticks an agent legitimately
+// spends waiting for a door to open, so that wait is never misread as this
+// kind of stall.
+const GOAL_STALL_WINDOW = 90;
+const GOAL_STALL_EPS = 0.02;
+
 export function createWorld(plan, mission, placements = []) {
   const grid = buildNavGrid(plan, placements);
   const rng = makeRng(`${plan.seed}:sim`);
@@ -70,6 +83,15 @@ export function createWorld(plan, mission, placements = []) {
       _stallZ: spawn.z,
       _stallCountdown: STALL_WINDOW,
       _stallSawWall: false,
+      // The second, independent stall signal (see GOAL_STALL_WINDOW): the
+      // closest this agent has gotten to its current waypoint recently, how
+      // many ticks are left before that has to have improved, and how many
+      // times in a row it hasn't — which is what decides whether a plain
+      // replan is enough or a small tie-breaking nudge is warranted too.
+      _goalBestDist: Infinity,
+      _goalCountdown: GOAL_STALL_WINDOW,
+      _goalStrikes: 0,
+      _nudgeBias: 0,
     });
   };
   mission.spawns.swat.forEach((s) => add('swat', s));
@@ -99,6 +121,7 @@ export function createWorld(plan, mission, placements = []) {
     a.path = smoothPath(grid, raw, () => true);
     a.pathIndex = 0;
     a.waitingFor = -1;
+    a._goalBestDist = Infinity; a._goalCountdown = GOAL_STALL_WINDOW; a._goalStrikes = 0; a._nudgeBias = 0;
     return true;
   };
 
@@ -154,6 +177,7 @@ export function createWorld(plan, mission, placements = []) {
       if (!a.path || a.pathIndex >= a.path.length) {
         a.vx = 0; a.vz = 0;
         a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW; a._stallSawWall = false;
+        a._goalBestDist = Infinity; a._goalCountdown = GOAL_STALL_WINDOW; a._goalStrikes = 0; a._nudgeBias = 0;
         continue;
       }
 
@@ -168,8 +192,61 @@ export function createWorld(plan, mission, placements = []) {
         continue;
       }
 
-      let dirX = dx / dist;
-      let dirZ = dz / dist;
+      // Second stall signal: is this agent actually getting any closer to
+      // its ultimate destination (`a.goal`), at all, lately? Tracked
+      // independently of the wall-evidence check below, because the
+      // failure mode it exists for never trips that one — a goal-pull
+      // vector exactly cancelled by a separation-push vector (or a step
+      // that lands back on the agent's own already-open cell) reports as
+      // "nothing blocked" every tick, so `_stallSawWall` never gets set and
+      // `replan()` never runs, and several agents converging on one shared
+      // point is exactly the situation that produces it. This deliberately
+      // measures distance to the final goal, not to the current waypoint:
+      // a waypoint changes every time a path is (re)computed or a step
+      // finishes, and resetting on every one of those would let a run of
+      // ineffective replans keep re-arming this window forever without
+      // ever actually reaching the count it needs to trip.
+      const goalDist = Math.hypot(a.x - a.goal.x, a.z - a.goal.z);
+      if (goalDist < a._goalBestDist - GOAL_STALL_EPS) {
+        a._goalBestDist = goalDist;
+        a._goalCountdown = GOAL_STALL_WINDOW;
+        a._goalStrikes = 0;
+        a._nudgeBias = 0;
+      } else {
+        a._goalCountdown--;
+        if (a._goalCountdown <= 0) {
+          replan(a);
+          a._goalStrikes++;
+          a._goalCountdown = GOAL_STALL_WINDOW;
+          // Re-arm the baseline at the CURRENT distance, not `Infinity`.
+          // Resetting to `Infinity` here would make next tick's comparison
+          // trivially true — any finite distance is "less than Infinity" —
+          // which would immediately zero `_goalStrikes` again and this
+          // could never count past a single strike no matter how many
+          // times the deadlock recurred.
+          a._goalBestDist = goalDist;
+          // A replan alone did not break it last time either — most likely
+          // several agents (or an agent and the hostage) are pressed
+          // together in a tight space, so a fresh route from here still
+          // points the same way. A deterministic-per-agent (never
+          // Math.random, so replay stays identical) sideways bias, growing
+          // with each repeated failure, is what tips this: a fixed small
+          // nudge can itself be overpowered by a strong separation force in
+          // a head-on corridor stand-off (up to roughly 0.8 in magnitude
+          // here), so a persistent deadlock needs an answer that keeps
+          // growing until it wins, not a single fixed-size tie-breaker.
+          // Zero until an agent has proven itself stuck more than once.
+          if (a._goalStrikes > 1) {
+            const sign = a.id % 2 === 0 ? 1 : -1;
+            a._nudgeBias = sign * Math.min(1.5, 0.25 * (a._goalStrikes - 1));
+          }
+        }
+      }
+
+      const baseDirX = dx / dist;
+      const baseDirZ = dz / dist;
+      let dirX = baseDirX;
+      let dirZ = baseDirZ;
 
       // Separation, capped: it may nudge an agent aside in a doorway but must
       // never be strong enough to shove one through a wall.
@@ -188,6 +265,16 @@ export function createWorld(plan, mission, placements = []) {
       }
       dirX += sepX * SIM.separationForce * 0.5;
       dirZ += sepZ * SIM.separationForce * 0.5;
+
+      // The tie-breaking nudge from a repeated goal stall, applied
+      // perpendicular to the goal direction itself (not the possibly
+      // near-zero combined vector above) so it is well-defined exactly
+      // when it is needed most: at an exact cancellation.
+      if (a._nudgeBias) {
+        dirX += -baseDirZ * a._nudgeBias;
+        dirZ += baseDirX * a._nudgeBias;
+      }
+
       const norm = Math.hypot(dirX, dirZ) || 1;
       dirX /= norm;
       dirZ /= norm;
@@ -267,6 +354,13 @@ export function createWorld(plan, mission, placements = []) {
         if (a._stallCountdown <= 0) {
           const progressed = Math.hypot(a.x - a._stallX, a.z - a._stallZ);
           const expected = speed * SIM.step * STALL_WINDOW;
+          // Deliberately does NOT reset the goal-stall tracker: `replan()`
+          // keeps the same `a.goal`, only recomputing the route to it, so a
+          // run of wall-triggered replans that each buy a few ticks of
+          // progress through fresh nearby waypoints — without the agent
+          // ever actually getting closer to where it is ultimately
+          // going — is exactly the pattern the goal-stall window has to
+          // keep counting through, not lose track of.
           if (a._stallSawWall && expected > 0 && progressed < expected * STALL_FRACTION) replan(a);
           a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW; a._stallSawWall = false;
         }
