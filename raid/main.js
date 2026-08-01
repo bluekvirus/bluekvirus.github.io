@@ -1,6 +1,6 @@
 import { createStage } from './stage.js';
 import { generateFloorplan } from './floorplan.js';
-import { assignRoles } from './roles.js';
+import { assignRoles, CAST } from './roles.js';
 import { buildLevel } from './build.js';
 import { layoutProps } from './furnish.js';
 import { buildProps } from './props.js';
@@ -197,7 +197,7 @@ engine.runRenderLoop(() => {
       outcomeEl.dataset.state = orders.outcome;
     } else {
       const alive = (role) => world.agents.filter((a) => a.role === role && a.alive).length;
-      outcomeEl.textContent = `SWAT ${alive('swat')}/4 · HOSTILES ${alive('hostile')}/7`;
+      outcomeEl.textContent = `SWAT ${alive('swat')}/${CAST.swat} · HOSTILES ${alive('hostile')}/${CAST.hostiles}`;
       outcomeEl.dataset.state = 'live';
     }
   }
