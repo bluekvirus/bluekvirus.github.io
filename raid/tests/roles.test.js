@@ -103,7 +103,21 @@ test('no two spawns land on top of each other', () => {
   }
 });
 
-test('every figure is issued a weapon, and the hostiles are a mix', () => {
+test('hostile weapon distribution is deterministic and includes both kinds', () => {
+  // The weapon assignment is seed-invariant by construction: CAST.hostiles is a
+  // frozen module constant (7), and the formula (i < 2 ? 'gun' : (i % 2 === 0 ?
+  // 'gun' : 'melee')) depends only on the loop index. Result: guns at indices
+  // 0, 1, 2, 4, 6 and melee at 3, 5. This test asserts that invariant explicitly
+  // so that changing CAST.hostiles fails loudly rather than silently reshuffling
+  // the mix.
+  const mission = assignRoles(generateFloorplan('distribution-test'));
+  const weapons = mission.spawns.hostiles.map((h) => h.weapon);
+
+  assert.deepEqual(weapons, ['gun', 'gun', 'gun', 'melee', 'gun', 'melee', 'gun'],
+    'hostile weapon distribution must be: guns at indices 0,1,2,4,6 and melee at 3,5');
+});
+
+test('every figure is issued a valid weapon field', () => {
   for (const seed of SEEDS) {
     const mission = assignRoles(generateFloorplan(seed));
 
@@ -115,10 +129,6 @@ test('every figure is issued a weapon, and the hostiles are a mix', () => {
     const kinds = mission.spawns.hostiles.map((h) => h.weapon);
     assert.ok(kinds.every((k) => k === 'gun' || k === 'melee'),
       `${seed}: a hostile has an unknown weapon: ${JSON.stringify(kinds)}`);
-    // Both kinds must actually appear, or the melee half of the feature is
-    // unreachable on this seed and the fight is a plain shootout.
-    assert.ok(kinds.includes('gun'), `${seed}: no hostile has a gun`);
-    assert.ok(kinds.includes('melee'), `${seed}: no hostile has a melee weapon`);
   }
 });
 
