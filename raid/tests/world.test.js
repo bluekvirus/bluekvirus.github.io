@@ -83,6 +83,15 @@ test('an agent given a reachable goal arrives', () => {
     const w = build(seed);
     const a = w.agents.find((x) => x.role === 'swat');
     const hostage = w.agents.find((x) => x.role === 'hostage');
+    // This test predates combat and checks path-following/arrival mechanics,
+    // not survival: it sends a single SWAT alone across the whole level,
+    // with none of the squad's usual covering fire. Now that combat.step()
+    // runs every tick (Task 5), that lone walk draws fire from any hostile
+    // with line of sight — measured, it kills the agent before arrival on 35
+    // of these 40 seeds, which is a confound unrelated to what this test
+    // checks. Neutralize the hostiles so the arrival check keeps measuring
+    // reachability, exactly as it did before combat existed.
+    for (const h of w.agents) if (h.role === 'hostile') h.alive = false;
     w.setGoal(a.id, { x: hostage.x, z: hostage.z });
     let arrived = false;
     for (let i = 0; i < 3600 && !arrived; i++) {
@@ -313,6 +322,66 @@ test('a replan keeps a short raw lead and smooths the rest of the route', () => 
   }
   assert.ok(segment(4) > 1,
     'the route past the raw lead was not smoothed at all');
+});
+
+test('agents spawn alive, armed, and at full health', () => {
+  const w = build('combat-spawn');
+  for (const a of w.agents) {
+    assert.equal(a.alive, true);
+    assert.ok(a.hp > 0, `agent ${a.id} spawned with no health`);
+    assert.ok(['gun', 'melee', 'none'].includes(a.weapon), `agent ${a.id} weapon is ${a.weapon}`);
+  }
+  assert.equal(w.agents.find((a) => a.role === 'hostage').captive, true);
+});
+
+test('the replay hash covers health, so a diverging fight cannot pass unnoticed', () => {
+  const a = build('hash-hp');
+  const b = build('hash-hp');
+  for (let i = 0; i < 300; i++) { a.tick(); b.tick(); }
+  assert.equal(a.hash(), b.hash());
+
+  // Sabotage one agent's health and require the hash to notice.
+  a.agents[0].hp -= 1;
+  assert.notEqual(a.hash(), b.hash(),
+    'hash() ignores hp — a combat divergence would replay as identical');
+});
+
+test('a dead agent stops moving and stays put', () => {
+  const w = build('dead-still');
+  const a = w.agents.find((x) => x.role === 'swat');
+  const hostage = w.agents.find((x) => x.role === 'hostage');
+  w.setGoal(a.id, { x: hostage.x, z: hostage.z });
+  for (let i = 0; i < 120; i++) w.tick();
+
+  a.hp = 0;
+  w.tick();
+  const at = { x: a.x, z: a.z };
+  for (let i = 0; i < 300; i++) w.tick();
+
+  assert.equal(a.alive, false, 'an agent at 0 hp is still alive');
+  assert.ok(Math.hypot(a.x - at.x, a.z - at.z) < 1e-9, 'a corpse drifted');
+  assert.equal(a.speed, 0);
+  assert.equal(a.path, null);
+});
+
+test('an agent halted to shoot takes no stall strikes', () => {
+  // Regression for the interaction the spec calls out: an agent standing still
+  // to fire makes no progress toward its goal, so the goal-stall detector
+  // would strike it, replan it, and nudge it into sliding sideways along a
+  // wall while shooting. A deliberate combat halt is a wait, not a jam --
+  // exactly like waiting at a shut door, which world.js already exempts.
+  const w = openRoom([{ x: 2, z: 2 }], 20);
+  const a = w.agents[0];
+  // Give it something to shoot: a hostile is not in openRoom's cast, so make
+  // this agent's own bookkeeping the subject and pin a fake engagement on it.
+  assert.ok(w.setGoal(0, { x: 18, z: 18 }));
+  for (let i = 0; i < 400; i++) {
+    a.target = 0;          // engaged with something
+    a.chasing = false;     // a gun agent: halts rather than closes
+    w.tick();
+  }
+  assert.equal(a._goalStrikes, 0,
+    'a deliberately halted shooter accumulated stall strikes and will be nudged off its firing position');
 });
 
 test('a wall-corner jam still recovers via replan even with a closed door further along the same segment', () => {
