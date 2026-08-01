@@ -245,11 +245,15 @@ clip actually gets seen, not just which one sounds more dramatic.
 
 All twenty-four clips exist identically in every GLB in the pack — verified,
 not assumed. `Run_Shoot` (0.833s) is one of the twenty-four but is not in the
-table above: nothing in this design ever calls for "firing while advancing",
-since a gun agent cannot be both moving and firing under the rule above, so
-it is intentionally never selected. Holding a dead figure on its last `Death`
-frame reuses the technique `seated.js` already uses for the hostage's floor
-pose.
+table above: `Gun_Shoot` is this pack's clip for "firing while moving," so
+`Run_Shoot` is never selected regardless of how the moving/stationary split
+plays out. Moving-and-firing is rare, not impossible: the halt in
+`sim/world.js` only holds while the target stays within `gunRange` (10m); a
+target that retreats past `gunRange` while remaining within `sightRange`
+(12m) un-halts its attacker while `firedAt` is still recent, which is the
+(uncommon) case the `Gun_Shoot` row covers. Holding a dead figure on its
+last `Death` frame reuses the technique `seated.js` already uses for the
+hostage's floor pose.
 
 `weapons.js` attaches geometry to the hand bone: a rifle for gun carriers, and
 one of the melee items for melee hostiles. The `soldier/` sandbox has already

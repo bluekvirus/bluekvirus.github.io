@@ -20,13 +20,13 @@ const RUN_MIN = 2.2;
 // anything wider than both is "sideways" (see directionalClip below).
 const FACING_CONE = Math.PI / 4;
 
-// `Run_Shoot` (0.833s, per the pack) is deliberately not listed: nothing in
-// `combatClip` below ever selects it, and it must not be — see the comment
-// there for why "firing while moving" is not the case it looks like it
-// should cover, and for the empirical trace that caught it. Every name that
-// IS listed here must be reachable, or it belongs on this line, not in the
-// rig: an unreachable entry costs every one of the twelve figures its own
-// dead weight/playing bookkeeping for a clip nothing will ever request.
+// `Run_Shoot` (0.833s, per the pack) is deliberately not listed: it is not
+// this pack's clip for "firing while moving" — `Gun_Shoot` is (see
+// `combatClip` below) — and nothing here ever selects `Run_Shoot` itself.
+// Every name that IS listed here must be reachable, or it belongs on this
+// line, not in the rig: an unreachable entry costs every one of the twelve
+// figures its own dead weight/playing bookkeeping for a clip nothing will
+// ever request.
 const CLIP_NAMES = [
   'Idle', 'Walk', 'Run', 'Run_Back', 'Run_Left', 'Run_Right',
   'Idle_Gun_Pointing', 'Idle_Gun_Shoot', 'Gun_Shoot',
@@ -94,6 +94,12 @@ function makeRig(figure) {
     weight: Object.fromEntries(CLIP_NAMES.map((n) => [n, 0])),
     playing: new Set(),
     started: false,
+    // Which firing/striking clip is currently in flight, and the `firedAt`
+    // tick it was chosen for — see combatClip's latch handling below. Both
+    // start at their "nothing has happened yet" values; `agent.firedAt`
+    // itself starts at -1 for an agent that has never fired, so the latch
+    // only ever activates on a genuine attack (see the `>= 0` guard below).
+    fireLatch: { clip: null, firedAt: -1 },
   };
 }
 
@@ -144,40 +150,58 @@ function directionalClip(agent) {
  * should be shown for, which is exactly right for a module that must run
  * headless at 340k ticks/s. `durations` is this agent's own rig's
  * `durationTicks` (see clipDurationTicks above) — a clip stays requested for
- * exactly its own real length, not a borrowed constant.
+ * exactly its own real length, not a borrowed constant. `latch` is this
+ * agent's own rig's `fireLatch` (see makeRig above), mutated in place here —
+ * see the block below for why this function needs to remember something
+ * across calls at all, not just read the agent's current fields.
  *
- * Every firing clip is additionally gated on `agent.target >= 0`, not just
- * on how recent `firedAt` is — that is what makes this correct rather than
- * merely well-timed. `combat.js` clears `target` to -1 the same tick (or, at
- * most, the very next tick) a target dies or breaks line of sight (see
- * `canTarget` in sim/combat.js, checked every tick, not only on a scan), so
- * `target >= 0` is never stale by more than one fixed sim step. Without this
- * gate, an agent whose target just died keeps reading as "still firing" for
- * the rest of the old shot's window while it has, in fact, already resumed
- * patrol at full speed — confirmed as the actual mechanism behind an earlier
- * version of this function: a 100-mission/3.1M-agent-tick replay found its
- * moving-and-firing clip selected 99.4% of the time for exactly this stale
- * reason, essentially never for an agent genuinely shooting on the move.
+ * Firing/striking clips are LATCHED, not gated on live agent state. The
+ * first version of this fix (round 1) gated every firing clip on
+ * `agent.target >= 0`, reasoning that combat.js clears `target` to -1 almost
+ * immediately once it is no longer valid. That reasoning was correct but
+ * misapplied: `combat.js` clears the ATTACKER's own `target` to -1 on the
+ * very next tick after ITS OWN SHOT kills its target (see `kill()` in
+ * sim/combat.js, called from `attack()`) — which means the single most
+ * common way for `target` to go stale is the attacker landing a killing
+ * blow, i.e. exactly the moment the animation matters most. Gating on
+ * `target >= 0` cut every killing blow's clip off after ~1 tick and
+ * cross-faded back to idle — reintroducing, for kills specifically, the
+ * "cut off mid-motion" symptom the duration-derivation fix above exists to
+ * remove.
+ *
+ * The fix is to decide which clip to show only ONCE per attack, the moment
+ * `agent.firedAt` changes to a value this rig has not latched before, and
+ * then hold that decision for the clip's own full duration regardless of
+ * what `target` or `speed` do in the meantime. `combat.js` only ever
+ * advances `firedAt` inside `attack()`, so a changed `firedAt` alone already
+ * means "an attack just happened" — no additional `target` check is needed
+ * to know a NEW window may begin. Latching also fixes a second flicker: an
+ * agent that starts firing stationary and then, mid-window, has its target
+ * retreat out of `gunRange` while staying within `sightRange` (un-halting
+ * it — see the `!a.chasing && distance <= rangeOf(a)` branch in
+ * sim/world.js) would otherwise re-evaluate speed every frame and swap
+ * `Idle_Gun_Shoot` for `Gun_Shoot` mid-swing.
  */
-function combatClip(agent, ticks, durations) {
+function combatClip(agent, ticks, durations, latch) {
   if (!agent.alive) return 'Death';
   if (agent.hitAt >= 0 && ticks - agent.hitAt < durations.HitRecieve) return 'HitRecieve';
 
-  if (agent.target >= 0 && agent.firedAt >= 0) {
-    // sim/world.js halts a gun agent's velocity to exactly 0 the instant it
-    // is in range with a valid target (its `!a.chasing && distance <=
-    // rangeOf(a)` branch — chasing is melee-only, see combat.js) — so
-    // stationary is the ordinary firing case for a gun and moving is the
-    // rare one, and the clip mapping below puts the pack's dedicated
-    // standing-fire clip on the common case rather than on the rare one.
-    // This also matches the design spec's own table ("Gun_Shoot moving,
-    // Idle_Gun_Shoot stationary"), which an earlier version of this
-    // function had backwards.
-    const clip = agent.weapon === 'melee'
+  if (agent.firedAt >= 0 && agent.firedAt !== latch.firedAt) {
+    // A new attack (hit or miss — `attack()` sets `firedAt` regardless)
+    // fired since this rig last looked. Decide the clip once, from
+    // whatever `target`/`weapon`/`speed` were at the moment it was noticed,
+    // and remember it: sim/world.js halts a gun agent's velocity to exactly
+    // 0 the instant it is in range with a valid target (chasing is
+    // melee-only, so this never applies to a melee agent), so stationary is
+    // the ordinary firing case for a gun and moving is the rare one — the
+    // mapping below puts the pack's dedicated standing-fire clip on the
+    // common case, matching the design spec's own table.
+    latch.firedAt = agent.firedAt;
+    latch.clip = agent.weapon === 'melee'
       ? 'Sword_Slash'
       : agent.speed < WALK_MIN ? 'Idle_Gun_Shoot' : 'Gun_Shoot';
-    if (ticks - agent.firedAt < durations[clip]) return clip;
   }
+  if (latch.clip && ticks - latch.firedAt < durations[latch.clip]) return latch.clip;
 
   // Holding a target but between shots: weapon up, not slack at the side.
   if (agent.target >= 0 && agent.weapon === 'gun' && agent.speed < WALK_MIN) {
@@ -373,7 +397,7 @@ export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
       // whole shared rig.
       for (const [i, rig] of rigs) {
         const a = world.agents[i];
-        crossfade(rig, a ? combatClip(a, world.ticks, rig.durationTicks) : 'Idle', dt);
+        crossfade(rig, a ? combatClip(a, world.ticks, rig.durationTicks, rig.fireLatch) : 'Idle', dt);
       }
     },
 
