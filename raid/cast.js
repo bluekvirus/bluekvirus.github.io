@@ -18,6 +18,7 @@
 
 import { layHostageOnFloor } from './seated.js';
 import { facingToRotationY } from './facing.js';
+import { attachWeapon } from './weapons.js';
 
 const ASSET_DIR = '../assets/quaternius/';
 
@@ -148,15 +149,48 @@ export async function populate(scene, mission, shadows) {
         shadows?.addShadowCaster(m);
       }
     }
-    figures.push({ root: made.root, skeleton: made.skeleton, groups: made.groups, role, entries: made.entries });
+    const spawnWeapon = spawn.weapon ?? 'none';
+    // Pushed BEFORE attachWeapon runs, not after: attachWeapon throws when a
+    // figure has no hand bone, and if that throw happens before this figure
+    // is in `figures`, the catch block below (and its "dispose everything
+    // built so far" sweep) never sees it — `made.root`'s meshes and
+    // `made.entries.skeletons` would leak even though every other figure got
+    // cleaned up. Pushing first, with `weaponMesh` still null, means a throw
+    // here still leaves this figure disposable like any other.
+    const figure = {
+      root: made.root, skeleton: made.skeleton, groups: made.groups,
+      role, entries: made.entries, weapon: spawnWeapon, weaponMesh: null,
+    };
+    figures.push(figure);
+    figure.weaponMesh = attachWeapon(scene, { ...made, role }, spawnWeapon);
+    if (figure.weaponMesh) shadows?.addShadowCaster(figure.weaponMesh);
   };
 
-  mission.spawns.swat.forEach((s, i) => add('swat', s, i));
-  mission.spawns.hostiles.forEach((s, i) => add('hostile', s, i));
-  add('hostage', mission.spawns.hostage, 0);
+  // instantiate()/attachWeapon() both throw partway through a figure (a
+  // missing required clip, a missing hand bone) and skeletonsAreDistinct
+  // throws too. Any of those mid-loop leaves every figure already pushed —
+  // its meshes, skeleton, animation groups, and any weapon mesh — with
+  // nothing to dispose it: `figures` never reaches the return statement, so
+  // the caller (main.js's uncaught `repopulate()` call) only ever sees the
+  // rejection, not the leak. Tear down everything built so far before
+  // rethrowing so a partial build doesn't leak into the scene.
+  try {
+    mission.spawns.swat.forEach((s, i) => add('swat', s, i));
+    mission.spawns.hostiles.forEach((s, i) => add('hostile', s, i));
+    add('hostage', mission.spawns.hostage, 0);
 
-  if (!skeletonsAreDistinct(figures)) {
-    throw new Error('cast: figures are sharing skeletons — per-figure animation is impossible');
+    if (!skeletonsAreDistinct(figures)) {
+      throw new Error('cast: figures are sharing skeletons — per-figure animation is impossible');
+    }
+  } catch (err) {
+    for (const f of figures) {
+      f.weaponMesh?.dispose();
+      for (const g of f.groups) g.dispose();
+      for (const s of f.entries.skeletons) s.dispose();
+      f.root.dispose(false, true);
+    }
+    for (const c of Object.values(containers)) c.dispose();
+    throw err;
   }
 
   // The hostage is laid on the floor rather than left standing.
@@ -176,6 +210,7 @@ export async function populate(scene, mission, shadows) {
     figures,
     dispose() {
       for (const f of figures) {
+        f.weaponMesh?.dispose();
         for (const g of f.groups) g.dispose();
         // instantiateModelsToScene's Skeleton is not a child of `root` in the
         // scene graph and is not owned by the container — a mesh only
