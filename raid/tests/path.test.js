@@ -71,6 +71,31 @@ test('unreachable goals return null rather than hanging', () => {
   assert.equal(findPath(grid, mission.spawns.swat[0], outside, open), null);
 });
 
+test('a path from inside geometry is refused, not answered with a waypoint in a wall', () => {
+  const plan = {
+    seed: 'blocked-start', config: { wallThickness: 0.1 },
+    bounds: { x: 0, z: 0, w: 8, d: 8 },
+    cells: [{ id: 0, x: 0, z: 0, w: 8, d: 8 }],
+    doors: [], adjacency: {}, walls: [],
+  };
+  const grid = buildNavGrid(plan, [{ x: 4, z: 4, w: 1.5, d: 1.5 }]);
+  // Dead centre of the 1.5x1.5 prop is blocked too, but proves nothing: every
+  // one of its immediate neighbours is ALSO inside the same blocked footprint
+  // (six cells wide at this grid resolution), so the search dead-ends on its
+  // first expansion regardless of whether the start cell itself is ever
+  // checked — findPath returns null with or without the fix this test exists
+  // to guard. A point near the EDGE of the footprint is still inside it (and
+  // still fails the isBlocked check below) but has an open neighbour just
+  // outside — verified by hand that, with the start-passability check
+  // removed, findPath returns a 14-waypoint route starting from inside the
+  // prop instead of refusing. That is what makes this fixture load-bearing.
+  const inside = { x: 3.3, z: 4 };
+  const cell = grid.worldToCell(inside.x, inside.z);
+  assert.equal(grid.isBlocked(cell.col, cell.row), true,
+    'the test fixture is wrong — that point is not actually inside the prop, so this proves nothing');
+  assert.equal(findPath(grid, inside, { x: 1, z: 1 }, () => true), null);
+});
+
 test('pathfinding is deterministic', () => {
   const { mission, grid } = build('det');
   const a = findPath(grid, mission.spawns.swat[0], mission.spawns.hostage, open);

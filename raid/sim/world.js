@@ -321,8 +321,19 @@ export function createWorld(plan, mission, placements = []) {
 
       // A chaser has arrived when it is in striking distance; combat.js does
       // the striking, so there is nothing further to do but hold position.
+      // Stall bookkeeping is reset here for the same reason the gun-halt
+      // branch above resets it: this is a deliberate hold, not a jam, and
+      // leaving it un-reset let a melee agent pinned at strike range for a
+      // long fight accrue goal-stall strikes it never earned, exactly the
+      // asymmetry the gun branch was already immune to.
       if (chaseTarget) {
-        if (dist < COMBAT.meleeRange * 0.75) { a.vx = 0; a.vz = 0; continue; }
+        if (dist < COMBAT.meleeRange * 0.75) {
+          a.vx = 0; a.vz = 0;
+          a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW; a._stallSawWall = false;
+          a._goalBestDist = Infinity; a._goalCountdown = GOAL_STALL_WINDOW; a._goalStrikes = 0;
+          a._nudgeBias = 0; a._nudgeTicks = 0; a._yieldTicks = 0;
+          continue;
+        }
       } else if (dist < SIM.arriveRadius) {
         a.pathIndex++;
         if (a.pathIndex >= a.path.length) { a.path = null; a.goal = null; a.vx = 0; a.vz = 0; }

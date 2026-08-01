@@ -407,6 +407,47 @@ test('an agent halted to shoot takes no stall strikes', () => {
     'a deliberately halted shooter accumulated stall strikes and will be nudged off its firing position');
 });
 
+// Regression, closing the asymmetry Task 6 left and Task 10 was asked to fix:
+// the gun-halt branch above resets every piece of stall bookkeeping the
+// instant it fires; the melee hold branch used to just `continue` without
+// touching any of it, leaving whatever was there from before the hold began
+// (a stale strike count, a live nudge bias, an in-progress yield) sitting
+// frozen rather than cleared, ready to misfire the moment the agent stops
+// holding. Seeded here by hand, the same way the halted-shooter test above
+// fakes its engagement, rather than trying to engineer a real stall first.
+test('a melee agent holding at strike range resets stall bookkeeping, same as a gun halt', () => {
+  const w = openRoom([{ x: 2, z: 2 }, { x: 2.5, z: 2 }], 20); // 0.5m apart: inside strike range
+  const [chaser, mark] = w.agents;
+  chaser.weapon = 'melee';
+  mark.role = 'hostile';
+  assert.ok(Math.hypot(chaser.x - mark.x, chaser.z - mark.z) < COMBAT.meleeRange * 0.75,
+    'test fixture is wrong -- these two are not actually inside strike range');
+
+  // Plant leftover bookkeeping as if this agent had been stalling on some
+  // earlier goal just before it started chasing -- exactly the state a hold
+  // that does not reset would leave untouched, tick after tick.
+  chaser._goalStrikes = 5;
+  chaser._goalBestDist = 1.23;
+  chaser._nudgeBias = 0.9;
+  chaser._nudgeTicks = 12;
+  chaser._yieldTicks = 20;
+  chaser._yieldTo = 1;
+  chaser._stallSawWall = true;
+
+  for (let i = 0; i < 30; i++) {
+    chaser.target = 1;      // engaged with something
+    chaser.chasing = true;  // a melee agent: closes/holds rather than halting
+    w.tick();
+  }
+
+  assert.equal(chaser._goalStrikes, 0,
+    'a melee agent holding at strike range kept a stale strike count instead of resetting it');
+  assert.equal(chaser._nudgeTicks, 0,
+    'a melee agent holding at strike range kept a live nudge bias instead of clearing it');
+  assert.equal(chaser._yieldTicks, 0,
+    'a melee agent holding at strike range kept an in-progress yield instead of clearing it');
+});
+
 // Regression: combat.js's canTarget acquires and HOLDS a target out to
 // COMBAT.sightRange (12m) -- a full 2m past COMBAT.gunRange (10m), the range
 // at which an attack could ever actually land. tick()'s "engaged with a gun"

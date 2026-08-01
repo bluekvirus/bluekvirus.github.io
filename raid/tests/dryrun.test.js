@@ -107,6 +107,14 @@ test('a full headless mission completes cleanly at every room count', () => {
         assert.ok(distance.get(a.id) > 5,
           `${seed}: SWAT agent ${a.id} travelled only ${distance.get(a.id).toFixed(1)}m — a frozen squad would still pass the aggregate distance check`);
       }
+
+      // Aggregate distance is satisfied by a couple of busy patrollers while
+      // the rest stand frozen. Every hostile that survived the mission should
+      // have covered ground of its own.
+      for (const a of world.agents.filter((x) => x.role === 'hostile' && x.alive)) {
+        assert.ok(distance.get(a.id) > 1,
+          `${seed}: surviving hostile ${a.id} never moved (${distance.get(a.id).toFixed(1)}m)`);
+      }
     }
   }
 

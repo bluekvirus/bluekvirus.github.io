@@ -33,11 +33,11 @@ export function buildNavGrid(plan, placements = [], overrides = {}) {
   // error-prone than trying to enumerate the gaps between rooms.
   blocked.fill(1);
 
-  const carve = (rect, pad) => {
-    const minC = Math.floor((rect.x - pad - originX) / cfg.cell);
-    const maxC = Math.ceil((rect.x + rect.w + pad - originX) / cfg.cell);
-    const minR = Math.floor((rect.z - pad - originZ) / cfg.cell);
-    const maxR = Math.ceil((rect.z + rect.d + pad - originZ) / cfg.cell);
+  const carve = (rect) => {
+    const minC = Math.floor((rect.x - originX) / cfg.cell);
+    const maxC = Math.ceil((rect.x + rect.w - originX) / cfg.cell);
+    const minR = Math.floor((rect.z - originZ) / cfg.cell);
+    const maxR = Math.ceil((rect.z + rect.d - originZ) / cfg.cell);
     for (let row = minR; row < maxR; row++) {
       for (let col = minC; col < maxC; col++) {
         if (!inBounds(col, row)) continue;
@@ -53,7 +53,7 @@ export function buildNavGrid(plan, placements = [], overrides = {}) {
     }
   };
 
-  for (const cell of plan.cells) carve(cell, 0);
+  for (const cell of plan.cells) carve(cell);
 
   // Doorways: the erosion above leaves a wall of blocked cells between every
   // pair of rooms, because a door opening is exactly where two rectangles stop.
