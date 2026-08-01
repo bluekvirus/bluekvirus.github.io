@@ -61,6 +61,24 @@ async function loadContainer(scene, file) {
 }
 
 /**
+ * Tear down one instantiateModelsToScene() result that `instantiate()` is
+ * about to reject partway through — the two throws below (an animation-group
+ * count mismatch, a missing required clip) both fire before `instantiate()`
+ * returns anything to its caller, so nothing about this figure has reached
+ * `populate()`'s `figures` array yet and its outer try/catch has no handle on
+ * it. If `instantiate()` didn't clean up after itself here, this figure's
+ * root, meshes, skeleton(s) and animation groups would sit in the scene
+ * forever after every failed build — the same leak class the outer
+ * try/catch exists to close for `attachWeapon()`, just one throw site
+ * earlier where that catch can't reach.
+ */
+function disposeEntries(entries, root) {
+  for (const g of entries.animationGroups) g.dispose();
+  for (const s of entries.skeletons) s.dispose();
+  root.dispose(false, true);
+}
+
+/**
  * One independent copy: its own meshes, its own Skeleton, and its own
  * AnimationGroups retargeted onto that skeleton. This is the whole point of
  * instantiateModelsToScene over clone() — `cloneMaterials: false` keeps the
@@ -106,6 +124,7 @@ function instantiate(container, spawn, name) {
   // thrown, which is exactly the kind of regression `skeletonsAreDistinct`
   // exists to keep loud. Fail loudly here instead.
   if (entries.animationGroups.length !== container.animationGroups.length) {
+    disposeEntries(entries, root);
     throw new Error(
       `cast: "${name}" instantiated ${entries.animationGroups.length} animation groups, ` +
       `template has ${container.animationGroups.length} — array-order rename is unsafe`
@@ -117,6 +136,7 @@ function instantiate(container, spawn, name) {
   const names = new Set(entries.animationGroups.map((g) => g.name));
   const missing = REQUIRED_CLIPS.filter((n) => !names.has(n));
   if (missing.length) {
+    disposeEntries(entries, root);
     throw new Error(`cast: "${name}" is missing required animation group(s) after rename: ${missing.join(', ')}`);
   }
 
@@ -166,14 +186,26 @@ export async function populate(scene, mission, shadows) {
     if (figure.weaponMesh) shadows?.addShadowCaster(figure.weaponMesh);
   };
 
-  // instantiate()/attachWeapon() both throw partway through a figure (a
-  // missing required clip, a missing hand bone) and skeletonsAreDistinct
-  // throws too. Any of those mid-loop leaves every figure already pushed —
-  // its meshes, skeleton, animation groups, and any weapon mesh — with
-  // nothing to dispose it: `figures` never reaches the return statement, so
-  // the caller (main.js's uncaught `repopulate()` call) only ever sees the
-  // rejection, not the leak. Tear down everything built so far before
-  // rethrowing so a partial build doesn't leak into the scene.
+  // `attachWeapon()` throws on a missing hand bone, and `skeletonsAreDistinct`
+  // throws after the loop — both leave every figure already pushed into
+  // `figures` (its meshes, skeleton, animation groups, and any weapon mesh)
+  // with nothing to dispose it, since `figures` never reaches the return
+  // statement and the caller (main.js's uncaught `repopulate()` call) only
+  // ever sees the rejection, not the leak. `add()` pushes each figure before
+  // calling `attachWeapon` specifically so a throw from `attachWeapon` on the
+  // figure currently being built is still covered by this sweep, not just
+  // figures from earlier iterations.
+  //
+  // `instantiate()` has its own two throw sites (a missing required clip, an
+  // animation-group count mismatch) but both fire before it returns anything
+  // to `add()`, before that figure could be pushed here — so this catch can
+  // never reach it. `instantiate()` disposes its own partial work (see
+  // `disposeEntries`) before rethrowing, so those two throw sites don't
+  // depend on this catch at all; this catch only ever has to sweep up
+  // figures from *earlier*, already-pushed iterations plus whichever figure
+  // was mid-`attachWeapon` when the whole loop unwound. Tear down everything
+  // built so far before rethrowing so a partial build doesn't leak into the
+  // scene.
   try {
     mission.spawns.swat.forEach((s, i) => add('swat', s, i));
     mission.spawns.hostiles.forEach((s, i) => add('hostile', s, i));
@@ -184,7 +216,7 @@ export async function populate(scene, mission, shadows) {
     }
   } catch (err) {
     for (const f of figures) {
-      f.weaponMesh?.dispose();
+      f.weaponMesh?.dispose(false, true);
       for (const g of f.groups) g.dispose();
       for (const s of f.entries.skeletons) s.dispose();
       f.root.dispose(false, true);
@@ -210,7 +242,7 @@ export async function populate(scene, mission, shadows) {
     figures,
     dispose() {
       for (const f of figures) {
-        f.weaponMesh?.dispose();
+        f.weaponMesh?.dispose(false, true);
         for (const g of f.groups) g.dispose();
         // instantiateModelsToScene's Skeleton is not a child of `root` in the
         // scene graph and is not owned by the container — a mesh only
