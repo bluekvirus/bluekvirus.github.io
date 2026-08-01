@@ -38,6 +38,27 @@ export function isEnemy(a, b) {
   return friendly(a.role) !== friendly(b.role);
 }
 
+const accuracyOf = (a) => {
+  if (a.weapon === 'melee') return COMBAT.meleeAccuracy;
+  return a.role === 'swat' ? COMBAT.swatAccuracy : COMBAT.hostileAccuracy;
+};
+
+/**
+ * Odds a single attack lands. A gun falls off linearly to half its accuracy at
+ * maximum range, so distance is worth something without a shot ever becoming
+ * impossible; melee is flat, because at 1.2m there is no falloff worth
+ * modelling.
+ */
+export function hitChance(a, distance) {
+  const base = accuracyOf(a);
+  if (a.weapon === 'melee') return base;
+  return base * (1 - 0.5 * distance / COMBAT.gunRange);
+}
+
+export const damageOf = (a) => (a.weapon === 'melee' ? COMBAT.meleeDamage : COMBAT.gunDamage);
+export const rangeOf = (a) => (a.weapon === 'melee' ? COMBAT.meleeRange : COMBAT.gunRange);
+export const cooldownOf = (a) => (a.weapon === 'melee' ? COMBAT.meleeCooldown : COMBAT.gunCooldown);
+
 export function createCombat({ grid, agents, rng, isDoorOpen, step }) {
   const distance = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
@@ -70,6 +91,33 @@ export function createCombat({ grid, agents, rng, isDoorOpen, step }) {
     return best;
   };
 
+  // Everything that makes a dead agent inert, in one place. Missing any one of
+  // these leaves a corpse that still steers, still shoots, or still soaks
+  // fire that should be going somewhere useful.
+  const kill = (a, tick) => {
+    a.hp = 0;
+    a.alive = false;
+    a.diedAt = tick;
+    a.target = -1;
+    a.chasing = false;
+    a.path = null;
+    a.goal = null;
+    a.vx = 0;
+    a.vz = 0;
+    a.speed = 0;
+    a.wants = 0;
+  };
+
+  const attack = (a, b, d, tick) => {
+    a.cooldown = cooldownOf(a);
+    a.firedAt = tick;
+    // One roll per attack, drawn in agent-id order, so a replay is exact.
+    if (rng.next() >= hitChance(a, d)) return;
+    b.hp -= damageOf(a);
+    b.hitAt = tick;
+    if (b.hp <= 0) kill(b, tick);
+  };
+
   return {
     step(tick) {
       for (const a of agents) {
@@ -82,6 +130,12 @@ export function createCombat({ grid, agents, rng, isDoorOpen, step }) {
         a.chasing = a.target >= 0 && a.weapon === 'melee';
 
         if (a.cooldown > 0) a.cooldown = Math.max(0, a.cooldown - step);
+
+        if (a.target < 0 || a.cooldown > 0) continue;
+        const b = agents[a.target];
+        const d = distance(a, b);
+        if (d > rangeOf(a)) continue;
+        attack(a, b, d, tick);
       }
     },
   };
