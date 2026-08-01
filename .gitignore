@@ -3,3 +3,6 @@
 
 # Style reference images (third-party promotional art — local only, never published)
 refs/
+
+# Playwright MCP scratch output (screenshots, console logs) — local debugging only
+.playwright-mcp/

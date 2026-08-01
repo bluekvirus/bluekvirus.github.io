@@ -71,28 +71,65 @@ export function buildLevel(scene, plan, mission, shadows) {
   }
 
   // Door frames: a lintel over each opening, so a doorway reads as a doorway
-  // rather than as a hole where the wall forgot to be.
-  const frames = plan.doors.map((door, i) => {
+  // rather than as a hole where the wall forgot to be. Doors also get a leaf
+  // (the swinging panel) below the lintel; unlike the lintels, leaves are NOT
+  // merged, because Task 8 rotates each one independently to track its own
+  // simulation door state.
+  const doorLeaves = [];
+  if (plan.doors.length) {
     const t = plan.config.wallThickness;
-    const lintel = BABYLON.MeshBuilder.CreateBox(`door_${i}`, {
-      width: door.axis === 'x' ? door.width : t,
-      depth: door.axis === 'x' ? t : door.width,
-      height: 0.35,
-    }, scene);
-    lintel.position.set(door.x, plan.config.wallHeight - 0.175, door.z);
-    return lintel;
-  });
-  if (frames.length) {
+    const doorMat = flat(scene, 'doorMat', '#575c64');
+    materials.push(doorMat);
+
+    const frames = plan.doors.map((door, i) => {
+      const lintel = BABYLON.MeshBuilder.CreateBox(`door_${i}`, {
+        width: door.axis === 'x' ? door.width : t,
+        depth: door.axis === 'x' ? t : door.width,
+        height: 0.35,
+      }, scene);
+      lintel.position.set(door.x, plan.config.wallHeight - 0.175, door.z);
+      return lintel;
+    });
     const merged = BABYLON.Mesh.MergeMeshes(frames, true, true, undefined, false, false);
     merged.name = 'doorFrames';
-    const mat = flat(scene, 'doorMat', '#575c64');
-    merged.material = mat;
-    materials.push(mat);
+    merged.material = doorMat;
     created.push(merged);
+
+    for (const door of plan.doors) {
+      const leaf = BABYLON.MeshBuilder.CreateBox(`doorLeaf_${door.id}`, {
+        width: door.axis === 'x' ? door.width : 0.06,
+        depth: door.axis === 'x' ? 0.06 : door.width,
+        height: 2.2,
+      }, scene);
+      // MeshBuilder centres the box on the origin, which would pivot it
+      // through the middle of the doorway when rotated. Bake the hinge
+      // offset into the vertex data instead, so the mesh's own local origin
+      // sits at one edge of the opening and rotating it about that origin
+      // swings it like a real hinge.
+      const half = door.width / 2;
+      const hingeOffset = door.axis === 'x'
+        ? new BABYLON.Vector3(half, 0, 0)
+        : new BABYLON.Vector3(0, 0, half);
+      leaf.bakeTransformIntoVertices(
+        BABYLON.Matrix.Translation(hingeOffset.x, hingeOffset.y, hingeOffset.z));
+      leaf.position.set(door.x - hingeOffset.x, 1.1, door.z - hingeOffset.z);
+      leaf.material = doorMat;
+      created.push(leaf);
+      doorLeaves.push(leaf);
+    }
   }
 
   // Spawn markers: a disc under each figure, plus the extraction point.
+  //
+  // The per-figure discs are returned as `agentDiscs`, in the same order the
+  // spawns are listed (swat, then hostiles, then the hostage) — which is the
+  // order `cast.populate` builds its figures and the order `createWorld`
+  // builds its agents, so index i is the same character in all three. Since
+  // phase B these figures walk, and a disc left at its spawn point is a
+  // ghost marking where someone used to be; `agents.js` carries them along.
+  // The extraction disc marks a place, not a person, and stays put.
   const discs = [];
+  const agentDiscs = [];
   const addDisc = (p, kind, radius) => {
     const disc = BABYLON.MeshBuilder.CreateCylinder(`marker_${kind}_${discs.length}`,
       { diameter: radius * 2, height: 0.02, tessellation: 18 }, scene);
@@ -101,15 +138,18 @@ export function buildLevel(scene, plan, mission, shadows) {
     materials.push(disc.material);
     discs.push(disc);
     created.push(disc);
+    return disc;
   };
 
-  for (const s of mission.spawns.swat) addDisc(s, 'swat', 0.42);
-  for (const s of mission.spawns.hostiles) addDisc(s, 'hostile', 0.42);
-  addDisc(mission.spawns.hostage, 'hostage', 0.5);
+  for (const s of mission.spawns.swat) agentDiscs.push(addDisc(s, 'swat', 0.42));
+  for (const s of mission.spawns.hostiles) agentDiscs.push(addDisc(s, 'hostile', 0.42));
+  agentDiscs.push(addDisc(mission.spawns.hostage, 'hostage', 0.5));
   addDisc(mission.spawns.extraction, 'extraction', 0.9);
 
   return {
     meshes: created,
+    doorLeaves,
+    agentDiscs,
     dispose() {
       for (const m of created) m.dispose(false, false);
       for (const m of materials) m.dispose();

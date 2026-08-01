@@ -13,7 +13,10 @@ import path from 'node:path';
 // main.js is NOT covered: it is a browser module, and its use of
 // Math.random() (to mint a random seed string for the "shuffle" button) is
 // legitimate there.
-const PURE_FILES = ['rng.js', 'floorplan.js', 'roles.js', 'furnish.js'];
+const PURE_FILES = [
+  'rng.js', 'floorplan.js', 'roles.js', 'furnish.js',
+  'sim/navgrid.js', 'sim/path.js', 'sim/world.js', 'sim/orders.js',
+];
 
 // Read as plain text and never imported — importing a module that touched
 // `window` or `document` would throw under Node before this test got a
