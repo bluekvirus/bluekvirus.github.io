@@ -4,6 +4,7 @@ import { generateFloorplan } from '../floorplan.js';
 import { assignRoles } from '../roles.js';
 import { layoutProps } from '../furnish.js';
 import { createWorld, SIM } from '../sim/world.js';
+import { COMBAT } from '../sim/combat.js';
 
 const SEEDS = Array.from({ length: 100 }, (_, i) => `world-${i}`);
 const build = (seed) => {
@@ -382,6 +383,55 @@ test('an agent halted to shoot takes no stall strikes', () => {
   }
   assert.equal(a._goalStrikes, 0,
     'a deliberately halted shooter accumulated stall strikes and will be nudged off its firing position');
+});
+
+test('a chasing melee agent closes on its target and holds at strike range', () => {
+  // Nothing else in the suite runs world.tick()'s actual chase-steering code
+  // and watches an agent move: combat.test.js drives createCombat directly
+  // and never calls world.tick(); the only paths that exercise this in
+  // motion are the two dry-run files this task's exemption leaves red. Build
+  // the scenario by hand instead of waiting on combat.js's own acquisition,
+  // the same way the halted-shooter regression above pins a fake engagement.
+  const w = openRoom([{ x: 2, z: 2 }, { x: 10, z: 2 }], 20);
+  const [chaser, mark] = w.agents;
+  chaser.weapon = 'melee';
+  // openRoom only spawns 'swat'; flipping the mark to 'hostile' is the only
+  // way to make it an enemy. Disarmed and given effectively infinite hp so
+  // the scenario isolates the chase steering rather than confounding it with
+  // the mark fighting back or dying mid-test -- the same isolation trick
+  // Task 4's melee tests used on the SWAT side.
+  mark.role = 'hostile';
+  mark.weapon = 'none';
+  mark.hp = 1e6;
+
+  const strikeDist = COMBAT.meleeRange * 0.75;
+  const distances = [];
+  for (let i = 0; i < 500; i++) {
+    w.tick();
+    distances.push(Math.hypot(chaser.x - mark.x, chaser.z - mark.z));
+  }
+
+  assert.ok(chaser.chasing, 'never actually entered the chasing state');
+  assert.ok(distances[0] > strikeDist + 1,
+    'test setup started already inside strike range -- proves nothing about closing distance');
+
+  const first = distances.findIndex((d) => d <= strikeDist + 0.05);
+  assert.ok(first >= 0 && first < 480,
+    'the chaser never closed to strike range in 500 ticks');
+
+  // Every step up to first contact must be getting closer, not wandering in
+  // -- otherwise "it eventually got there" could hide a chaser that isn't
+  // actually steering at its target.
+  for (let i = 1; i <= first; i++) {
+    assert.ok(distances[i] <= distances[i - 1] + 1e-9,
+      `distance increased at tick ${i} (${distances[i - 1].toFixed(3)} -> ${distances[i].toFixed(3)}) while still closing`);
+  }
+
+  // ...and held there afterward, instead of walking through or past the mark.
+  for (let i = first + 1; i < distances.length; i++) {
+    assert.ok(distances[i] <= strikeDist + 0.05 && distances[i] >= strikeDist - 0.5,
+      `chaser drifted to ${distances[i].toFixed(2)}m at tick ${i} after reaching strike range (expected near ${strikeDist.toFixed(2)}m)`);
+  }
 });
 
 test('a wall-corner jam still recovers via replan even with a closed door further along the same segment', () => {

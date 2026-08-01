@@ -121,6 +121,16 @@ export function createCombat({ grid, agents, rng, isDoorOpen, step }) {
   return {
     step(tick) {
       for (const a of agents) {
+        // hp is the single source of truth for whether an agent is alive.
+        // Ordinarily `kill()` below finalizes a death atomically the instant
+        // an attack causes it, but hp can also reach zero by some other means
+        // entirely outside this module -- a test sabotaging it directly, or
+        // some future system that damages an agent without going through
+        // `attack()`. Self-healing that here, in the module that owns the
+        // concept, is what keeps such an agent from lingering marked `alive:
+        // true` at zero health for even one more tick, and means callers
+        // (world.js) need no death-handling code of their own at all.
+        if (a.alive && a.hp <= 0) kill(a, tick);
         if (!a.alive || a.weapon === 'none') { a.target = -1; a.chasing = false; continue; }
 
         if (a.target >= 0 && !canTarget(a, agents[a.target])) a.target = -1;

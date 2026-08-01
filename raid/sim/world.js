@@ -128,10 +128,12 @@ export function createWorld(plan, mission, placements = []) {
       firedAt: -1,
       hitAt: -1,
       diedAt: -1,
-      // The hostage is a prisoner until the squad reaches it. Hostiles do not
-      // shoot their own leverage; orders.js clears this at the rescue, which
-      // is what makes the "hostage killed" failure condition reachable during
-      // the escort without making it a coin flip in the opening seconds.
+      // The hostage is a prisoner until the squad reaches it: combat.js
+      // treats a captive hostage as untargetable, so hostiles do not shoot
+      // their own leverage. Nothing clears this flag yet -- that is Task 6's
+      // rescue-phase bookkeeping in orders.js -- so right now the hostage
+      // stays untargetable for the whole mission and the "hostage killed"
+      // failure condition is unreachable until that lands.
       captive: role === 'hostage',
     });
   };
@@ -240,27 +242,11 @@ export function createWorld(plan, mission, placements = []) {
       }
     }
 
-    // hp is the single source of truth for whether an agent is alive.
-    // combat.js's own attacks already finalize a kill atomically the instant
-    // they cause one; this catches every OTHER way hp can reach zero (tests
-    // sabotaging it directly, as the regression test below does, or any
-    // future system that damages an agent outside combat.step()) and applies
-    // the same finalization, so an agent never lingers marked `alive: true`
-    // with zero health for even one extra tick.
-    for (const a of agents) {
-      if (a.alive && a.hp <= 0) {
-        a.alive = false;
-        a.diedAt = world.ticks;
-        a.target = -1;
-        a.chasing = false;
-        a.path = null;
-        a.goal = null;
-        a.vx = 0; a.vz = 0; a.speed = 0; a.wants = 0;
-      }
-    }
-
     // Before movement, so a decision to stand and fight applies on the tick it
-    // is made rather than one tick late.
+    // is made rather than one tick late. combat.js owns the alive/hp
+    // invariant entirely (including self-healing an agent whose hp reached
+    // zero by some means other than its own attacks) -- world.js needs no
+    // death-handling code of its own.
     combat.step(world.ticks);
 
     for (const a of agents) {
