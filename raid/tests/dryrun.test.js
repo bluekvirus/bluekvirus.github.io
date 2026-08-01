@@ -28,6 +28,7 @@ import { createOrders } from '../sim/orders.js';
 test('a full headless mission completes cleanly at every room count', () => {
   const SEEDS_PER_ROOM_COUNT = 4;
   const MAX_TICKS = 60 * 120; // missions run ~77-87 simulated seconds; generous ceiling, not a target
+  const outcomes = new Set();
 
   for (let rooms = 8; rooms <= 12; rooms++) {
     for (let i = 0; i < SEEDS_PER_ROOM_COUNT; i++) {
@@ -44,7 +45,7 @@ test('a full headless mission completes cleanly at every room count', () => {
       const openedDoors = new Set();
 
       let ticks = 0;
-      while (orders.phase !== 'done' && ticks < MAX_TICKS) {
+      while (orders.outcome === null && ticks < MAX_TICKS) {
         world.tick();
         orders.update(world);
         ticks++;
@@ -75,14 +76,20 @@ test('a full headless mission completes cleanly at every room count', () => {
         }
       }
 
-      assert.equal(orders.phase, 'done', `${seed}: did not finish within ${MAX_TICKS / 60} simulated seconds`);
+      outcomes.add(orders.outcome);
 
-      // 'done' means "the phase machine reached its last state", which the
-      // advance-leg watchdog can in principle reach without the squad ever
-      // actually standing in the hostage's room (see orders.js). This is the
-      // assertion that makes 'done' mean the rescue actually happened.
-      assert.ok(orders.hostageReached,
-        `${seed}: mission reported done, but the squad never genuinely reached the hostage room (the advance watchdog skipped the final leg)`);
+      // Either side may win — that is the point of a genuine contest. What is
+      // never acceptable is a mission that neither finishes nor fails: that is
+      // a hang, and it is the thing this test exists to catch.
+      assert.ok(orders.outcome === 'success' || orders.outcome === 'failed',
+        `${seed}: mission never resolved within ${MAX_TICKS / 60} simulated seconds`);
+
+      if (orders.outcome === 'success') {
+        assert.ok(orders.hostageReached,
+          `${seed}: reported success without the squad ever reaching the hostage room`);
+        assert.ok(world.agents.find((a) => a.role === 'hostage').alive,
+          `${seed}: reported success with a dead hostage`);
+      }
 
       // A run that "completes" without anyone actually moving would still
       // reach 'done' if a goal resolved off-grid and every phase fell through
@@ -96,10 +103,16 @@ test('a full headless mission completes cleanly at every room count', () => {
       // Total distance alone is satisfied by the patrolling hostiles pacing
       // their rooms for the whole run — a frozen SWAT squad would still pass
       // it. Require the squad specifically to have covered real ground.
-      for (const a of world.agents.filter((x) => x.role === 'swat')) {
+      for (const a of world.agents.filter((x) => x.role === 'swat' && x.alive)) {
         assert.ok(distance.get(a.id) > 5,
           `${seed}: SWAT agent ${a.id} travelled only ${distance.get(a.id).toFixed(1)}m — a frozen squad would still pass the aggregate distance check`);
       }
     }
   }
+
+  // A combat model where SWAT always win is as broken as one where they always
+  // lose, and a suite that only ever observes one outcome is not testing
+  // combat at all. This is deliberately about the SET of seeds, not any one
+  // of them -- no individual seed is required to go either way.
+  assert.ok(outcomes.has('success'), 'no seed produced a successful mission');
 });

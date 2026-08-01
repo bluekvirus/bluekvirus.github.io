@@ -123,6 +123,11 @@ export function createOrders(plan, mission) {
     // the same way — so this is what lets a caller (and the end-to-end test)
     // tell a genuine rescue from a mission that quietly walked past it.
     hostageReached: false,
+    // null while the mission is live. 'success' only via the extraction check
+    // with the hostage alive; 'failed' when there is nobody left to finish or
+    // nothing left to rescue. `phase === 'done'` has never been the same
+    // question as "did it work" -- this is.
+    outcome: null,
   };
 
   // Start the current leg over: fresh setGoal calls for everyone from wherever
@@ -161,12 +166,24 @@ export function createOrders(plan, mission) {
     // Ground truth behind `phase === 'done'` — see the field comment on
     // `state.hostageReached` above.
     get hostageReached() { return state.hostageReached; },
+    get outcome() { return state.outcome; },
     update(world) {
-      const swat = world.agents.filter((a) => a.role === 'swat');
+      if (state.outcome !== null) return;
+
+      // Living members only, everywhere. `swat.every(...)` over a corpse never
+      // becomes true, so an arrival check that counted the dead would hang the
+      // advance until the watchdog dragged it forward.
+      const swat = world.agents.filter((a) => a.role === 'swat' && a.alive);
       const hostage = world.agents.find((a) => a.role === 'hostage');
 
+      if (swat.length === 0 || !hostage.alive) {
+        state.outcome = 'failed';
+        state.phase = 'failed';
+        return;
+      }
+
       // Hostiles wander inside their own room.
-      for (const a of world.agents.filter((x) => x.role === 'hostile')) {
+      for (const a of world.agents.filter((x) => x.role === 'hostile' && x.alive)) {
         const home = byId.get(a.cellId);
         const wait = state.patrol.get(a.id) ?? 0;
         if (!a.path && wait <= 0) {
@@ -240,7 +257,9 @@ export function createOrders(plan, mission) {
       }
 
       if (state.phase === 'rescue') {
-        // The hostage joins the squad and they all head for extraction.
+        // No longer leverage: from here the hostage walks out with the squad,
+        // and hostiles will shoot at it (see combat.js canTarget).
+        hostage.captive = false;
         state.phase = 'extract';
         beginLeg();
         return;
@@ -273,7 +292,10 @@ export function createOrders(plan, mission) {
           stageIssue(world, tasks);
         }
         const out = [...swat, hostage].every((a) => Math.hypot(a.x - exit.x, a.z - exit.z) < 3);
-        if (out) state.phase = 'done';
+        if (out) {
+          state.phase = 'done';
+          state.outcome = 'success';
+        }
       }
     },
   };

@@ -8,7 +8,7 @@
 import { makeRng } from '../rng.js';
 import { buildNavGrid } from './navgrid.js';
 import { findPath, smoothPath } from './path.js';
-import { createCombat, COMBAT } from './combat.js';
+import { createCombat, COMBAT, rangeOf } from './combat.js';
 
 export const SIM = Object.freeze({
   step: 1 / 60,
@@ -130,10 +130,10 @@ export function createWorld(plan, mission, placements = []) {
       diedAt: -1,
       // The hostage is a prisoner until the squad reaches it: combat.js
       // treats a captive hostage as untargetable, so hostiles do not shoot
-      // their own leverage. Nothing clears this flag yet -- that is Task 6's
-      // rescue-phase bookkeeping in orders.js -- so right now the hostage
-      // stays untargetable for the whole mission and the "hostage killed"
-      // failure condition is unreachable until that lands.
+      // their own leverage. orders.js clears this flag in the rescue phase
+      // once the squad actually reaches the hostage, so from that point on
+      // hostiles can target it and the "hostage killed" failure condition
+      // becomes reachable.
       captive: role === 'hostage',
     });
   };
@@ -256,13 +256,26 @@ export function createWorld(plan, mission, placements = []) {
       // Engaged with a gun: stand and shoot. Movement stops, but the agent
       // still turns to face what it is shooting at.
       //
+      // Gated on actual weapon range (`rangeOf`), not merely on having a
+      // target: combat.js's own canTarget acquires and holds a target out to
+      // `sightRange` (12m), a full 2m past `gunRange` (10m) at which it could
+      // ever actually fire. Halting for that entire gap left two agents that
+      // could see but not hit each other frozen facing one another forever —
+      // neither firing (out of range), neither moving (deliberate-halt
+      // bookkeeping exempts them from every stall detector) — an unbounded
+      // hang no watchdog above this layer can see, because nothing here ever
+      // looks stuck by the signals they check. Out of range, this agent falls
+      // through to ordinary path movement instead, which is what lets it
+      // close the distance (or simply carry on its orders) until it is
+      // actually able to shoot.
+      //
       // The stall bookkeeping is reset every tick this holds, for the same
       // reason the door-wait branch below resets it: this is a deliberate
       // wait, not a jam. Without this the goal-stall detector counts the
       // firing position as a lack of progress, strikes, replans, and finally
       // nudges the agent sideways along whatever wall it is behind — the
       // recovery machinery actively fighting the behaviour it should ignore.
-      if (a.target >= 0 && !a.chasing) {
+      if (a.target >= 0 && !a.chasing && Math.hypot(agents[a.target].x - a.x, agents[a.target].z - a.z) <= rangeOf(a)) {
         a.vx = 0; a.vz = 0;
         const t = agents[a.target];
         const want = Math.atan2(t.x - a.x, t.z - a.z);
