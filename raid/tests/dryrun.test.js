@@ -111,10 +111,18 @@ test('a full headless mission completes cleanly at every room count', () => {
       // hardest to tell apart from a genuinely fought-and-lost one. Every
       // SWAT agent's tracked distance already freezes at the tick it dies
       // (a corpse cannot move), so it still reads as real ground covered
-      // before death, not zero -- checked against 750 seeds' worth of dead
-      // SWAT with this exact tuning: minimum distance covered before dying
-      // was 5.94m, comfortably clear of the 5m bar, so this does not turn
-      // into a flaky assertion on a legitimate early casualty.
+      // before death, not zero.
+      //
+      // The `> 5` bar has much less headroom against a general seed
+      // population than that might suggest -- two independent sweeps across
+      // seeds outside this test's own fixed set found legitimate early
+      // casualties under it: one a dead SWAT at 4.02m, with roughly 0.35% of
+      // all dead-SWAT records landing under the bar; another a 5.31m minimum
+      // over 644 dead-SWAT records, 0.31m of margin. What actually keeps this
+      // assertion from being flaky is that this test runs a fixed set of 20
+      // seeds (measured minimum distance before death: 10.71m), not any
+      // margin baked into the `5` itself -- do not read `> 5` as safe against
+      // an arbitrary seed, only against this specific set.
       for (const a of world.agents.filter((x) => x.role === 'swat')) {
         assert.ok(distance.get(a.id) > 5,
           `${seed}: SWAT agent ${a.id} travelled only ${distance.get(a.id).toFixed(1)}m — a frozen squad would still pass the aggregate distance check`);

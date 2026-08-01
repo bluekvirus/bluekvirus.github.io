@@ -393,16 +393,55 @@ test('an agent halted to shoot takes no stall strikes', () => {
   // would strike it, replan it, and nudge it into sliding sideways along a
   // wall while shooting. A deliberate combat halt is a wait, not a jam --
   // exactly like waiting at a shut door, which world.js already exempts.
-  const w = openRoom([{ x: 2, z: 2 }], 20);
-  const a = w.agents[0];
-  // Give it something to shoot: a hostile is not in openRoom's cast, so make
-  // this agent's own bookkeeping the subject and pin a fake engagement on it.
-  assert.ok(w.setGoal(0, { x: 18, z: 18 }));
-  for (let i = 0; i < 400; i++) {
-    a.target = 0;          // engaged with something
-    a.chasing = false;     // a gun agent: halts rather than closes
+  //
+  // Rebuilt on a REAL opposing agent, driven through combat.js's own
+  // acquisition -- the same pattern the range-gate test below uses. The
+  // original version pinned `a.target = 0` on the agent ITSELF before every
+  // tick, but combat.step() validates every held target every tick via
+  // `isEnemy`, and `isEnemy(a, a)` is false by definition (see combat.js) --
+  // so that self-target was silently cleared back to -1 before the movement
+  // loop below ever read it. The gun-halt branch's own condition
+  // (`a.target >= 0 && !a.chasing && ...`) was never once true, and the
+  // assertion below passed for a shooter that was, in fact, just walking
+  // normally: instrumented, the halt branch was entered 0 times in 400
+  // ticks and the agent covered 9.31m.
+  const w = openRoom([{ x: 2, z: 2 }, { x: 18, z: 18 }], 20);
+  const [a, mark] = w.agents;
+  mark.role = 'hostile'; // openRoom only spawns 'swat'; flip one to make them enemies.
+  a.hp = 1e6; mark.hp = 1e6; // isolate the stall question from either side dying.
+
+  // Dirty a's goal-stall bookkeeping BEFORE combat ever enters the picture,
+  // by physically pinning it in place (the same trick `pin()` above uses),
+  // for well over the goal-stall detector's own window, with the enemy still
+  // 22m away (outside sightRange) so this exercises only the ordinary
+  // movement path, never combat. Proves the detector genuinely accrues
+  // strikes here, so a later reading of zero means something reset it, not
+  // that nothing ever happened. 204 ticks: comfortably more than twice
+  // GOAL_STALL_WINDOW (90), and a multiple of COMBAT.scanInterval (6) so the
+  // very next tick after teleporting `mark` in below lands exactly on agent
+  // `a`'s own scan turn, with no intervening real movement to muddy the
+  // dirtied bookkeeping.
+  assert.ok(w.setGoal(a.id, { x: 18, z: 2 }));
+  const pinnedAt = { x: a.x, z: a.z };
+  for (let i = 0; i < 204; i++) {
     w.tick();
+    a.x = pinnedAt.x; a.z = pinnedAt.z;
   }
+  assert.ok(a._goalStrikes > 0,
+    'test setup failed to dirty the goal-stall bookkeeping before combat -- proves nothing below');
+
+  // Now bring a real, opposing gun agent into range and let combat.js's own
+  // acquisition pick it up, on the very next tick (see the tick count above).
+  mark.x = a.x + 5; mark.z = a.z; // 5m: inside gunRange (10)
+  w.tick();
+  assert.ok(a.target === mark.id && !a.chasing,
+    'agent a never acquired a real gun target on the expected tick -- this scenario tests nothing');
+
+  const haltedAt = { x: a.x, z: a.z };
+  for (let i = 0; i < 200; i++) w.tick();
+
+  assert.ok(Math.hypot(a.x - haltedAt.x, a.z - haltedAt.z) < 1e-9,
+    'a halted shooter moved -- this scenario is not actually exercising the gun-halt branch');
   assert.equal(a._goalStrikes, 0,
     'a deliberately halted shooter accumulated stall strikes and will be nudged off its firing position');
 });

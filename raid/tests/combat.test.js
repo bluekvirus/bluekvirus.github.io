@@ -157,6 +157,35 @@ test('ties break on the lower id even when the agents array is not in ascending 
   ], [], [2, 1, 0]); // handed to createCombat in DESCENDING id order
   for (let t = 0; t < COMBAT.scanInterval; t++) combat.step(t);
   assert.equal(agents[0].target, 1, 'did not break the distance tie on the lower id');
+
+  // Regression: `acquire()`'s own tie-break above is already order-agnostic
+  // (it compares `b.id`, never array position), but `step()` used to resolve
+  // a held target back to an object via `agents[a.target]` — indexing the
+  // *scrambled* internal array by an id, silently assuming position equals
+  // id. Under this exact [2, 1, 0] fixture that resolves id 0 (the target
+  // both hostiles want) to whichever hostile happens to sit at position 0
+  // internally — id 2 — so id 2 read itself back as its own target (and hit
+  // itself for 25 the first time it fired) while id 1 read a fellow hostile
+  // back as its target, and the SWAT itself was never actually fired upon by
+  // either — invisible to the single assertion above, which never looked at
+  // either hostile. Confirmed by direct instrumentation of this exact
+  // fixture: under the bug, by t=39, the SWAT sits untouched at 100 hp, id 2
+  // has taken one self-inflicted hit (100 -> 75), and both hostiles'
+  // `target` are still flapping between 0 and -1 every few ticks (each
+  // acquisition immediately invalidated the next tick, since resolving id 0
+  // through the scrambled array hands `canTarget` a fellow hostile, and
+  // `isEnemy` rejects same-side pairs) rather than settling. Fixed, the same
+  // 39 ticks resolve id 0 through `byId` to the actual SWAT every time: both
+  // hostiles hold a stable target on it, the SWAT (correctly fired upon by
+  // id 1, which it is tied with) has taken its own hit down to 75, and id 2
+  // — which the SWAT's tie-break never even targets — is never fired on by
+  // anyone and sits untouched at 100.
+  for (let t = COMBAT.scanInterval; t < 40; t++) combat.step(t);
+  assert.equal(agents[1].target, 0, 'hostile id 1 did not resolve its target to the SWAT');
+  assert.equal(agents[2].target, 0, 'hostile id 2 did not resolve its target to the SWAT');
+  assert.equal(agents[2].hp, 100,
+    'hostile id 2 took damage — nothing should ever fire on it in this fixture, so this is either self-inflicted or friendly fire');
+  assert.equal(agents[0].hp, 75, 'the SWAT was never actually fired upon despite both hostiles holding a target on it');
 });
 
 test('gun accuracy falls off with distance; melee does not', () => {

@@ -211,14 +211,25 @@ test('a scripted dry run never leaves an agent frozen short of its goal', () => 
 test('replaying the previously-frozen seed reproduces the same run', () => {
   const run = () => {
     const { world, orders } = build('dry-10-8', { targetRooms: 10 });
-    for (let i = 0; i < 60 * 240 && orders.phase !== 'done'; i++) { world.tick(); orders.update(world); }
-    return { hash: world.hash(), phase: orders.phase };
+    // Stop on resolution, not on `phase === 'done'`: combat is live now, and
+    // a squad wipe or a lost hostage resolves through `phase === 'failed'`,
+    // which this loop would never see, burning the entire 240-second budget
+    // every time it fires. This used to pin `orders.phase` to `'done'`
+    // outright -- exactly the defect already fixed for the casualty test
+    // elsewhere in this file, missed here. Of the neighbouring `dry-10-7`
+    // through `dry-10-15` seeds, two resolve as `failed`; this exact seed
+    // could flip the same way on a future retune for no correctness reason.
+    for (let i = 0; i < 60 * 240 && orders.outcome === null; i++) { world.tick(); orders.update(world); }
+    return { hash: world.hash(), outcome: orders.outcome };
   };
   const a = run();
   const b = run();
-  assert.equal(a.phase, 'done');
+  assert.ok(a.outcome === 'success' || a.outcome === 'failed',
+    `dry-10-8 did not resolve within 240 simulated seconds (outcome: ${a.outcome})`);
+  // The point of this test: the same seed replayed twice must reach bit-for-
+  // bit identical state, whichever way the mission resolves.
   assert.equal(a.hash, b.hash);
-  assert.equal(a.phase, b.phase);
+  assert.equal(a.outcome, b.outcome);
 });
 
 // A live-lock, not a deadlock. Seed `verify2-12-1` (12 rooms) hung with SWAT

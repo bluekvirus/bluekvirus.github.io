@@ -93,6 +93,15 @@ export function createWorld(plan, mission, placements = []) {
   const isDoorOpen = (id) => doors[id]?.state === 'open';
 
   const agents = [];
+  // Invariant: `id` is assigned as this array's own length at push time, and
+  // nothing ever reorders or splices `agents` afterward — so array position
+  // equals id for the whole life of a world. combat.js's target resolution
+  // (`byId.get`), the halt/chase branches and `_yieldTo` lookups below
+  // (`agents[...]`), `agentById`, and orders.test.js's `isEngaged` all index
+  // this array directly by id rather than searching it, and depend on that
+  // holding. A caller that reorders `agents` (combat.test.js's `order`
+  // fixture does exactly this, deliberately, to prove combat.js itself does
+  // not rely on it) must not carry that assumption into this module.
   const add = (role, spawn) => {
     agents.push({
       id: agents.length,

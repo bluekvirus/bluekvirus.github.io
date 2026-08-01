@@ -16,15 +16,21 @@
 // that clip to its last frame and freezing it there is a body on the floor
 // for free, with correct anatomy guaranteed by construction.
 //
-// The hostage is the sole user of its skeleton (Casual.glb, unlike Swat.glb
-// and Punk.glb which are shared by four and seven figures respectively), so
-// nothing else moves when this runs.
+// Every figure now owns its own skeleton -- including the hostage's own copy
+// of Casual.glb -- so nothing else moves when this runs regardless of which
+// figure it's called on. (This used to note that the hostage was the sole
+// user of its skeleton while Swat.glb and Punk.glb were shared by four and
+// seven figures respectively; that shared-skeleton model is exactly what
+// per-figure skeletons, added later, replaced.)
 
 /** The TransformNode each targeted bone's animation actually drives. Glancing
- * at `scene.animationGroups` alone doesn't tell you which of the 72 groups
- * (24 clips x 3 models) belong to THIS figure — all three models imported
- * their own copy of every clip. Matching by the actual target identity is
- * the only way that can't accidentally reach into a shared skeleton. */
+ * at `scene.animationGroups` alone doesn't tell you which of the ~288
+ * instance groups (24 clips x 12 figures, each instantiated off one of the
+ * 72 template groups -- 24 clips x 3 models -- that the loader stops and
+ * never plays) belong to THIS figure: every figure owns its own skeleton, so
+ * its instances are its own copies, not shared with any other figure using
+ * the same model. Matching by the actual target identity is the only way
+ * that can't accidentally reach into another figure's skeleton. */
 function ownedGroups(figure, scene) {
   const nodes = new Set(figure.skeleton.bones.map((b) => b.getTransformNode?.()).filter(Boolean));
   return scene.animationGroups.filter((g) => g.targetedAnimations.some((ta) => nodes.has(ta.target)));

@@ -69,6 +69,13 @@ export const cooldownOf = (a) => (a.weapon === 'melee' ? COMBAT.meleeCooldown : 
 export function createCombat({ grid, agents, rng, isDoorOpen, step }) {
   const distance = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
+  // `a.target` is an agent id, not an index into `agents` — the two only
+  // coincide if `agents` happens to be ordered exactly by id. world.js's own
+  // array always is (see the invariant comment where it builds `agents`),
+  // but this module must not assume its caller does the same: resolve every
+  // id through this map instead of indexing `agents` directly.
+  const byId = new Map(agents.map((a) => [a.id, a]));
+
   // Whether `a` may hold `b` as a target right now. Checked on acquisition AND
   // every tick thereafter, so a target that dies or steps behind a wall is
   // dropped immediately rather than lingering until the next scan window.
@@ -144,7 +151,7 @@ export function createCombat({ grid, agents, rng, isDoorOpen, step }) {
         if (a.alive && a.hp <= 0) kill(a, tick);
         if (!a.alive || a.weapon === 'none') { a.target = -1; a.chasing = false; continue; }
 
-        if (a.target >= 0 && !canTarget(a, agents[a.target])) a.target = -1;
+        if (a.target >= 0 && !canTarget(a, byId.get(a.target))) a.target = -1;
         if (a.target < 0 && tick % COMBAT.scanInterval === a.id % COMBAT.scanInterval) {
           a.target = acquire(a);
         }
@@ -153,7 +160,7 @@ export function createCombat({ grid, agents, rng, isDoorOpen, step }) {
         if (a.cooldown > 0) a.cooldown = Math.max(0, a.cooldown - step);
 
         if (a.target < 0 || a.cooldown > 0) continue;
-        const b = agents[a.target];
+        const b = byId.get(a.target);
         const d = distance(a, b);
         if (d > rangeOf(a)) continue;
         attack(a, b, d, tick);
