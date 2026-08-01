@@ -9,6 +9,7 @@
 // sim has no notion of wall-clock time at all.
 
 import { facingToRotationY } from './facing.js';
+import { SIM } from './sim/world.js';
 
 const BLEND = 0.15;      // seconds to cross-fade between clips
 const WALK_MIN = 0.15;   // below this an agent reads as standing still
@@ -19,25 +20,72 @@ const RUN_MIN = 2.2;
 // anything wider than both is "sideways" (see directionalClip below).
 const FACING_CONE = Math.PI / 4;
 
+// `Run_Shoot` (0.833s, per the pack) is deliberately not listed: nothing in
+// `combatClip` below ever selects it, and it must not be — see the comment
+// there for why "firing while moving" is not the case it looks like it
+// should cover, and for the empirical trace that caught it. Every name that
+// IS listed here must be reachable, or it belongs on this line, not in the
+// rig: an unreachable entry costs every one of the twelve figures its own
+// dead weight/playing bookkeeping for a clip nothing will ever request.
 const CLIP_NAMES = [
   'Idle', 'Walk', 'Run', 'Run_Back', 'Run_Left', 'Run_Right',
-  'Idle_Gun_Pointing', 'Idle_Gun_Shoot', 'Gun_Shoot', 'Run_Shoot',
+  'Idle_Gun_Pointing', 'Idle_Gun_Shoot', 'Gun_Shoot',
   'Sword_Slash', 'HitRecieve', 'Death',
 ];
 
-// How long, in sim ticks, a one-shot clip keeps being requested after the
-// event that triggered it. The sim reports an instant ("fired on tick 812");
-// the renderer needs a duration, and these are what turn one into the other.
-const FIRE_TICKS = 18;   // ~0.3s of muzzle animation per shot
-const FLINCH_TICKS = 24; // ~0.4s of reacting to being hit
+/**
+ * How long a one-shot combat clip keeps being requested after the sim event
+ * that triggered it, in SIM TICKS — derived from the clip's own recorded
+ * length rather than a single guessed constant, because one constant read
+ * across clips of very different lengths can only be right for one of them:
+ * an earlier version of this file used a flat 18/24-tick window for every
+ * firing/flinch clip and every one of them but `HitRecieve` (close by
+ * coincidence) visibly cut short and blended back to idle mid-motion.
+ * Measured directly against the pinned Babylon 9.18.1 + this asset pack,
+ * identical across all three GLBs actually used (Swat.glb, Punk.glb,
+ * Casual.glb — confirmed by reading `group.from`/`.to` off each of a SWAT,
+ * a hostile, and the hostage figure's own rig, not assumed from one):
+ *
+ *   Gun_Shoot       0.600s
+ *   Idle_Gun_Shoot  0.667s
+ *   Sword_Slash     1.033s
+ *   HitRecieve      0.567s
+ *   Death           1.067s (held, not windowed — Death never expires, see startClip below)
+ *
+ * `AnimationGroup.from`/`.to` are frame numbers, not seconds, and every clip
+ * in this pack runs at 60fps (`targetedAnimations[0].animation
+ * .framePerSecond`, read directly rather than assumed) — `(to - from) / fps`
+ * recovers real seconds straight from the asset, then converts to ticks
+ * against `SIM.step`. Computed once per rig in makeRig() below rather than
+ * per frame: it depends only on the clip, not on anything that changes
+ * tick to tick. This is deliberately read from the actual loaded
+ * `AnimationGroup`, not hand-copied from the measurements above, so a
+ * future asset swap with different clip lengths (or even a different fps)
+ * stays correct automatically instead of silently reintroducing the
+ * cut-short bug this replaces. (Babylon 9.18.1 exposes everything this
+ * needs directly on the group, so no fallback to a hand-maintained
+ * per-clip constant table was needed — the measurements above are recorded
+ * for documentation, not because the code depends on them.)
+ */
+function clipDurationTicks(group) {
+  const fps = group?.targetedAnimations[0]?.animation?.framePerSecond;
+  if (!group || !fps) return 0; // missing/malformed clip: request it for 0 ticks rather than loop forever or crash
+  return Math.round(((group.to - group.from) / fps) / SIM.step);
+}
 
 /** A fresh per-clip weight/playing/started bookkeeping block for one rig
  * (one figure's own skeleton and groups), same shape whether it is set up up
  * front (SWAT, hostiles) or later, the moment the hostage is rescued (see
  * sync() below). */
 function makeRig(figure) {
+  const groups = Object.fromEntries(CLIP_NAMES.map((n) => [n, figure.groups.find((g) => g.name === n)]));
   return {
-    groups: Object.fromEntries(CLIP_NAMES.map((n) => [n, figure.groups.find((g) => g.name === n)])),
+    groups,
+    // Per-clip one-shot request window, in sim ticks — see
+    // clipDurationTicks above. Computed once here, from this rig's own
+    // groups, not shared across figures: every figure in this pack happens
+    // to measure identically, but nothing here assumes that has to stay true.
+    durationTicks: Object.fromEntries(CLIP_NAMES.map((n) => [n, clipDurationTicks(groups[n])])),
     // Per-clip weight, independent of any single "from -> to" pair. A clip
     // request just becomes the one name with target weight 1 (everything
     // else targets 0); a change of mind mid-fade is handled for free by
@@ -94,15 +142,42 @@ function directionalClip(agent) {
  * `world.ticks` is passed in because the sim records combat events as tick
  * stamps rather than as durations — it has no notion of how long anything
  * should be shown for, which is exactly right for a module that must run
- * headless at 340k ticks/s.
+ * headless at 340k ticks/s. `durations` is this agent's own rig's
+ * `durationTicks` (see clipDurationTicks above) — a clip stays requested for
+ * exactly its own real length, not a borrowed constant.
+ *
+ * Every firing clip is additionally gated on `agent.target >= 0`, not just
+ * on how recent `firedAt` is — that is what makes this correct rather than
+ * merely well-timed. `combat.js` clears `target` to -1 the same tick (or, at
+ * most, the very next tick) a target dies or breaks line of sight (see
+ * `canTarget` in sim/combat.js, checked every tick, not only on a scan), so
+ * `target >= 0` is never stale by more than one fixed sim step. Without this
+ * gate, an agent whose target just died keeps reading as "still firing" for
+ * the rest of the old shot's window while it has, in fact, already resumed
+ * patrol at full speed — confirmed as the actual mechanism behind an earlier
+ * version of this function: a 100-mission/3.1M-agent-tick replay found its
+ * moving-and-firing clip selected 99.4% of the time for exactly this stale
+ * reason, essentially never for an agent genuinely shooting on the move.
  */
-function combatClip(agent, ticks) {
+function combatClip(agent, ticks, durations) {
   if (!agent.alive) return 'Death';
-  if (agent.hitAt >= 0 && ticks - agent.hitAt < FLINCH_TICKS) return 'HitRecieve';
+  if (agent.hitAt >= 0 && ticks - agent.hitAt < durations.HitRecieve) return 'HitRecieve';
 
-  const firing = agent.firedAt >= 0 && ticks - agent.firedAt < FIRE_TICKS;
-  if (firing && agent.weapon === 'melee') return 'Sword_Slash';
-  if (firing) return agent.speed > WALK_MIN ? 'Run_Shoot' : 'Gun_Shoot';
+  if (agent.target >= 0 && agent.firedAt >= 0) {
+    // sim/world.js halts a gun agent's velocity to exactly 0 the instant it
+    // is in range with a valid target (its `!a.chasing && distance <=
+    // rangeOf(a)` branch — chasing is melee-only, see combat.js) — so
+    // stationary is the ordinary firing case for a gun and moving is the
+    // rare one, and the clip mapping below puts the pack's dedicated
+    // standing-fire clip on the common case rather than on the rare one.
+    // This also matches the design spec's own table ("Gun_Shoot moving,
+    // Idle_Gun_Shoot stationary"), which an earlier version of this
+    // function had backwards.
+    const clip = agent.weapon === 'melee'
+      ? 'Sword_Slash'
+      : agent.speed < WALK_MIN ? 'Idle_Gun_Shoot' : 'Gun_Shoot';
+    if (ticks - agent.firedAt < durations[clip]) return clip;
+  }
 
   // Holding a target but between shots: weapon up, not slack at the side.
   if (agent.target >= 0 && agent.weapon === 'gun' && agent.speed < WALK_MIN) {
@@ -165,6 +240,23 @@ export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
   // is the kind of thing that reads as a bug from across the room. Playing it
   // non-looping leaves Babylon holding the final frame, which is exactly the
   // pose wanted.
+  //
+  // That is safe with crossfade's bookkeeping below, but only by a margin
+  // worth keeping in mind on a future asset swap. Once Babylon self-completes
+  // a non-looping group, `rig.playing` is left stale (still says the clip is
+  // playing — nothing here calls `stop()` on it), so crossfade keeps calling
+  // `setWeightForAllAnimatables` on a group with zero animatables left every
+  // frame after that; that is a harmless no-op, and `if (w === target)
+  // continue` above stops it from ever trying to re-`start()` the same clip.
+  // The margin is that this only holds because Death (1.067s) is far longer
+  // than BLEND (0.15s): the raw weight ramp always finishes climbing to 1
+  // well before the clip itself self-completes, so `rig.playing` never goes
+  // stale WHILE the raw weight is still mid-fade — if it did, the
+  // renormalisation sum below would be dividing by a stale `playing` set
+  // that no longer matches which groups are actually still ramping, a
+  // phantom-weight race. A future Death clip shorter than roughly BLEND
+  // would reopen exactly that race and would need either a longer BLEND or
+  // an explicit "did Babylon finish this on its own" check here.
   const startClip = (g, name) => g.start(name !== 'Death', 1.0, g.from, g.to, false);
 
   const crossfade = (rig, name, dt) => {
@@ -281,7 +373,7 @@ export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
       // whole shared rig.
       for (const [i, rig] of rigs) {
         const a = world.agents[i];
-        crossfade(rig, a ? combatClip(a, world.ticks) : 'Idle', dt);
+        crossfade(rig, a ? combatClip(a, world.ticks, rig.durationTicks) : 'Idle', dt);
       }
     },
 

@@ -224,16 +224,32 @@ clip per agent by priority:
 | Condition | Clip |
 |---|---|
 | Dead | `Death`, played once and held on its last frame |
-| Damaged within the last ~0.4s | `HitRecieve` |
-| Firing this moment | `Gun_Shoot` moving, `Idle_Gun_Shoot` stationary |
+| Damaged within the last `HitRecieve`'s own length (0.567s) | `HitRecieve` |
+| Firing this moment, gun, moving | `Gun_Shoot` (0.600s) |
+| Firing this moment, gun, stationary | `Idle_Gun_Shoot` (0.667s) |
 | Has a target, gun, between shots | `Idle_Gun_Pointing` |
-| Striking this moment | `Sword_Slash` |
+| Striking this moment, melee | `Sword_Slash` (1.033s) |
 | Moving | `Walk` / `Run` / directional, as today |
 | Otherwise | `Idle` |
 
+"This moment" is not a fixed guessed window — each firing/striking/flinch
+clip stays selected for exactly its own real length, read at runtime off the
+loaded `AnimationGroup` (`(to - from) / fps`, converted to sim ticks) rather
+than a hand-picked constant, so it plays out in full instead of being cut
+short and blended back to idle mid-motion. A gun agent's velocity is forced
+to exactly 0 by `sim/world.js` the instant it is in range with a valid
+target (chasing — closing distance while still moving — is melee-only), so
+stationary is the ordinary firing case for a gun and moving is the rare one;
+`Idle_Gun_Shoot` therefore carries the common case, matching how often each
+clip actually gets seen, not just which one sounds more dramatic.
+
 All twenty-four clips exist identically in every GLB in the pack — verified,
-not assumed. Holding a dead figure on its last `Death` frame reuses the
-technique `seated.js` already uses for the hostage's floor pose.
+not assumed. `Run_Shoot` (0.833s) is one of the twenty-four but is not in the
+table above: nothing in this design ever calls for "firing while advancing",
+since a gun agent cannot be both moving and firing under the rule above, so
+it is intentionally never selected. Holding a dead figure on its last `Death`
+frame reuses the technique `seated.js` already uses for the hostage's floor
+pose.
 
 `weapons.js` attaches geometry to the hand bone: a rifle for gun carriers, and
 one of the melee items for melee hostiles. The `soldier/` sandbox has already
