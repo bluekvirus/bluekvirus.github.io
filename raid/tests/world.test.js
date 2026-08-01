@@ -431,7 +431,6 @@ test('a melee agent holding at strike range resets stall bookkeeping, same as a 
   chaser._nudgeBias = 0.9;
   chaser._nudgeTicks = 12;
   chaser._yieldTicks = 20;
-  chaser._yieldTo = 1;
   chaser._stallSawWall = true;
 
   for (let i = 0; i < 30; i++) {

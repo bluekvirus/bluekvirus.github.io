@@ -68,6 +68,21 @@ const NUDGE_TICKS = 20;
 // walking pace is ~32 ticks, so this is that with margin.
 const YIELD_TICKS = 45;
 
+// Every field either stall detector owns, reset to "clean, starting fresh
+// from here". Shared by every tick()-loop branch that deliberately holds or
+// idles rather than jams -- a gun halt, a melee hold, and an agent with
+// nothing left to do all mean the exact same thing to both detectors: this
+// is not evidence of being stuck. Extracted after the melee-hold branch was
+// found (Task 10 review) to have skipped this reset entirely, the one the
+// gun-halt branch had always done -- three call sites carrying an identical
+// ten-field block by copy-paste is itself the kind of drift that let that
+// asymmetry happen unnoticed in the first place.
+const resetStallBookkeeping = (a) => {
+  a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW; a._stallSawWall = false;
+  a._goalBestDist = Infinity; a._goalCountdown = GOAL_STALL_WINDOW; a._goalStrikes = 0;
+  a._nudgeBias = 0; a._nudgeTicks = 0; a._yieldTicks = 0;
+};
+
 export function createWorld(plan, mission, placements = []) {
   const grid = buildNavGrid(plan, placements);
   const rng = makeRng(`${plan.seed}:sim`);
@@ -296,9 +311,7 @@ export function createWorld(plan, mission, placements = []) {
         while (delta > Math.PI) delta -= Math.PI * 2;
         while (delta < -Math.PI) delta += Math.PI * 2;
         a.facing += delta * Math.min(1, SIM.turnRate * SIM.step);
-        a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW; a._stallSawWall = false;
-        a._goalBestDist = Infinity; a._goalCountdown = GOAL_STALL_WINDOW; a._goalStrikes = 0;
-        a._nudgeBias = 0; a._nudgeTicks = 0; a._yieldTicks = 0;
+        resetStallBookkeeping(a);
         continue;
       }
 
@@ -308,9 +321,7 @@ export function createWorld(plan, mission, placements = []) {
       const chaseTarget = a.chasing && a.target >= 0 ? agents[a.target] : null;
       if (!chaseTarget && (!a.path || a.pathIndex >= a.path.length)) {
         a.vx = 0; a.vz = 0;
-        a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW; a._stallSawWall = false;
-        a._goalBestDist = Infinity; a._goalCountdown = GOAL_STALL_WINDOW; a._goalStrikes = 0;
-        a._nudgeBias = 0; a._nudgeTicks = 0; a._yieldTicks = 0;
+        resetStallBookkeeping(a);
         continue;
       }
 
@@ -329,9 +340,7 @@ export function createWorld(plan, mission, placements = []) {
       if (chaseTarget) {
         if (dist < COMBAT.meleeRange * 0.75) {
           a.vx = 0; a.vz = 0;
-          a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW; a._stallSawWall = false;
-          a._goalBestDist = Infinity; a._goalCountdown = GOAL_STALL_WINDOW; a._goalStrikes = 0;
-          a._nudgeBias = 0; a._nudgeTicks = 0; a._yieldTicks = 0;
+          resetStallBookkeeping(a);
           continue;
         }
       } else if (dist < SIM.arriveRadius) {

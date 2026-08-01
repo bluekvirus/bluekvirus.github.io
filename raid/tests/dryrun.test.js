@@ -27,7 +27,7 @@ import { createOrders } from '../sim/orders.js';
 // never actually gotten there.
 test('a full headless mission completes cleanly at every room count', () => {
   const SEEDS_PER_ROOM_COUNT = 4;
-  const MAX_TICKS = 60 * 120; // missions run ~77-87 simulated seconds; generous ceiling, not a target
+  const MAX_TICKS = 60 * 120; // missions run ~25-54 simulated seconds now that combat can end one early; generous ceiling, not a target
   const outcomes = new Set();
 
   for (let rooms = 8; rooms <= 12; rooms++) {

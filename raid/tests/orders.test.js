@@ -308,7 +308,23 @@ test('a mission with the whole squad dead ends as failed, not hung', () => {
 test('a dead squad member is not waited on', () => {
   // The advance leg used to require every SWAT member to arrive. A corpse
   // never arrives, so the first death would hang the leg until the watchdog
-  // dragged it forward -- turning a casualty into a minutes-long stall.
+  // dragged it forward -- turning a casualty into a minutes-long stall. That
+  // is the property this test exists to guard: a hang, not a win.
+  //
+  // This used to assert `orders.outcome === 'success'` on this one fixed
+  // seed. From the casualty onward the rest of the mission is a live,
+  // stochastic firefight (three SWAT plus a wounded formation against
+  // whatever hostiles remain) -- pinning a fixed seed's win or loss is
+  // exactly the "does one seed happen to win a coin flip" property this
+  // project's own design rule forbids testing (see dryrun.test.js's
+  // `outcome === 'success' || outcome === 'failed'`), and it is NOT the same
+  // question as "did the watchdog drag a stranded leg forward instead of
+  // hanging on the corpse forever". A reviewer confirmed the fixed-seed
+  // assertion was non-monotonic under nearby constant changes -- proof it
+  // was reading noise, not a property. What actually distinguishes "the
+  // watchdog worked" from "the mission hung waiting for a corpse" is
+  // resolving at all, and resolving nowhere near the ceiling a genuine hang
+  // would ride out to.
   const plan = generateFloorplan('outcome-casualty');
   const mission = assignRoles(plan);
   const world = createWorld(plan, mission, layoutProps(plan, mission));
@@ -320,8 +336,17 @@ test('a dead squad member is not waited on', () => {
 
   let ticks = 0;
   while (orders.outcome === null && ticks < 14400) { world.tick(); orders.update(world); ticks++; }
-  assert.equal(orders.outcome, 'success',
-    'three surviving SWAT could not finish the mission after one casualty');
+  assert.ok(orders.outcome === 'success' || orders.outcome === 'failed',
+    'a dead squad member hung the mission instead of the watchdog dragging it forward');
+  // Comfortably under the 14400-tick ceiling used above, and well under the
+  // per-leg LEG_TIMEOUT*(_MAX_REISSUES+1) watchdog escalation in orders.js:
+  // a mission that actually hung on the corpse would ride out close to one
+  // of those, not resolve early. Measured on this seed across a range of
+  // COMBAT tunings: 1300-2600 ticks either way -- this bound leaves ample
+  // margin above that without coming anywhere near the ceiling a real hang
+  // would hit.
+  assert.ok(ticks < 8000,
+    `mission took ${ticks} ticks to resolve after a casualty -- too close to the watchdog ceiling to be confident this isn't the stall it guards against`);
 });
 
 test('the mission fails if the hostage is killed during the escort', () => {

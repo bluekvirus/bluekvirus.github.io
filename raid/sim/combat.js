@@ -10,19 +10,19 @@
 import { hasLineOfSight } from './path.js';
 
 export const COMBAT = Object.freeze({
-  sightRange: 14,
+  sightRange: 12,
   gunRange: 10,
   meleeRange: 1.2,
   gunCooldown: 0.8,
   meleeCooldown: 1.1,
   gunDamage: 25,
-  meleeDamage: 45,
-  swatHp: 120,
+  meleeDamage: 35,
+  swatHp: 75,
   hostileHp: 80,
-  hostageHp: 19,
-  swatAccuracy: 0.73,
-  hostileAccuracy: 0.93,
-  meleeAccuracy: 0.9,
+  hostageHp: 40,
+  swatAccuracy: 0.8,
+  hostileAccuracy: 0.75,
+  meleeAccuracy: 0.75,
   // Ticks between target scans for any one agent. Twelve agents each testing
   // line of sight to eleven others every tick is 132 grid traversals per tick
   // against a 2ms budget; staggering by id divides that by six for at most
