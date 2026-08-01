@@ -27,6 +27,13 @@ const MODEL = {
   hostage: 'Casual.glb',
 };
 
+// Every clip agents.js's CLIP_NAMES (raid/agents.js) or seated.js's Death
+// lookup (raid/seated.js) will ever ask a figure's `groups` for by name.
+// Kept here, not imported from agents.js, so cast.js can assert coverage
+// without reaching into a renderer-binding module for a list — if either
+// module starts looking a new clip up by name, add it here too.
+const REQUIRED_CLIPS = ['Idle', 'Walk', 'Run', 'Run_Back', 'Run_Left', 'Run_Right', 'Death'];
+
 /**
  * Every figure must own its own skeleton. Four SWAT sharing one skeleton is
  * the pack's default (TransformNode.clone() does not clone a skinned mesh's
@@ -86,9 +93,31 @@ function instantiate(container, spawn, name) {
   // position against the container's own (never-renamed) groups — verified
   // empirically that instantiateModelsToScene preserves array order between
   // `container.animationGroups` and `entries.animationGroups` one-for-one.
+  //
+  // That array-order correspondence is not a documented API guarantee, only
+  // an empirical observation about this Babylon version, so it is checked
+  // here rather than assumed silently. A length mismatch would make the
+  // per-index rename below outright wrong (naming the wrong group after the
+  // wrong clip); a missing required clip after renaming means a lookup by
+  // name downstream (agents.js's CLIP_NAMES, seated.js's Death) would go
+  // quietly undefined instead of erroring — `crossfade()` in agents.js
+  // already guards `if (!g) continue`, so that failure would be silent, not
+  // thrown, which is exactly the kind of regression `skeletonsAreDistinct`
+  // exists to keep loud. Fail loudly here instead.
+  if (entries.animationGroups.length !== container.animationGroups.length) {
+    throw new Error(
+      `cast: "${name}" instantiated ${entries.animationGroups.length} animation groups, ` +
+      `template has ${container.animationGroups.length} — array-order rename is unsafe`
+    );
+  }
   entries.animationGroups.forEach((g, i) => {
     g.name = container.animationGroups[i].name;
   });
+  const names = new Set(entries.animationGroups.map((g) => g.name));
+  const missing = REQUIRED_CLIPS.filter((n) => !names.has(n));
+  if (missing.length) {
+    throw new Error(`cast: "${name}" is missing required animation group(s) after rename: ${missing.join(', ')}`);
+  }
 
   const skinned = root.getChildMeshes().find((m) => m.skeleton);
   return {
@@ -148,6 +177,16 @@ export async function populate(scene, mission, shadows) {
     dispose() {
       for (const f of figures) {
         for (const g of f.groups) g.dispose();
+        // instantiateModelsToScene's Skeleton is not a child of `root` in the
+        // scene graph and is not owned by the container — a mesh only
+        // REFERENCES a skeleton, it does not own it, which is the very
+        // reason the old shared-skeleton bug existed in the first place.
+        // `root.dispose()` below never touches it, and nothing else in this
+        // tree does either, so it must be disposed explicitly or it is
+        // orphaned into `scene.skeletons` forever. Iterate `f.entries.skeletons`
+        // (the authoritative set this instantiation created), not just
+        // `f.skeleton`, in case a future model shape yields more than one.
+        for (const s of f.entries.skeletons) s.dispose();
         f.root.dispose(false, true);
       }
       for (const c of Object.values(containers)) c.dispose();
