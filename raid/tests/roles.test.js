@@ -102,3 +102,36 @@ test('no two spawns land on top of each other', () => {
     }
   }
 });
+
+test('every figure is issued a weapon, and the hostiles are a mix', () => {
+  for (const seed of SEEDS) {
+    const mission = assignRoles(generateFloorplan(seed));
+
+    for (const s of mission.spawns.swat) {
+      assert.equal(s.weapon, 'gun', `${seed}: a SWAT member is not carrying a gun`);
+    }
+    assert.equal(mission.spawns.hostage.weapon, 'none');
+
+    const kinds = mission.spawns.hostiles.map((h) => h.weapon);
+    assert.ok(kinds.every((k) => k === 'gun' || k === 'melee'),
+      `${seed}: a hostile has an unknown weapon: ${JSON.stringify(kinds)}`);
+    // Both kinds must actually appear, or the melee half of the feature is
+    // unreachable on this seed and the fight is a plain shootout.
+    assert.ok(kinds.includes('gun'), `${seed}: no hostile has a gun`);
+    assert.ok(kinds.includes('melee'), `${seed}: no hostile has a melee weapon`);
+  }
+});
+
+test('the two hostage guards are always armed with guns', () => {
+  // A melee guard standing over the hostage would charge the squad the moment
+  // it entered the room, abandoning the objective it exists to defend. The
+  // guards are the two hostiles sharing the hostage's room.
+  for (const seed of SEEDS) {
+    const mission = assignRoles(generateFloorplan(seed));
+    const guards = mission.spawns.hostiles.filter((h) => h.cellId === mission.hostageRoomId);
+    assert.equal(guards.length, 2, `${seed}: expected exactly 2 hostage guards`);
+    for (const g of guards) {
+      assert.equal(g.weapon, 'gun', `${seed}: a hostage guard is carrying a melee weapon`);
+    }
+  }
+});
