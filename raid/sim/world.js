@@ -159,6 +159,19 @@ export function createWorld(plan, mission, placements = []) {
   world.setGoal = (id, point) => {
     const a = agents[id];
     if (!a) return false;
+    // A corpse cannot be given new orders. Without this, a caller that built
+    // its task list from the living squad and then dispatches it staggered
+    // over several ticks (see orders.js's stageIssue) can still hand a
+    // setGoal to an agent that died in the ticks between: tick() already
+    // skips dead agents in its movement loop, so a path/goal written here
+    // after death is never read by movement, never cleared by another death
+    // (kill() only runs once, at the moment hp reaches zero), and the corpse
+    // holds it forever -- indistinguishable from a genuinely frozen agent to
+    // anything measuring "is this agent's position changing while it holds a
+    // path." Refusing here, at the one place a goal is ever written, is
+    // cheaper and more robust than requiring every caller to remember to
+    // check `alive` first.
+    if (!a.alive) return false;
     // Path with every door treated as open. A closed door on the route is a
     // thing to walk up to and open, not a reason to route the long way round —
     // and re-pathing every time a door changes state would thrash.

@@ -3,8 +3,30 @@ import assert from 'node:assert/strict';
 import { generateFloorplan } from '../floorplan.js';
 import { assignRoles } from '../roles.js';
 import { layoutProps } from '../furnish.js';
-import { createWorld } from '../sim/world.js';
+import { createWorld, SIM } from '../sim/world.js';
 import { createOrders } from '../sim/orders.js';
+import { rangeOf, COMBAT } from '../sim/combat.js';
+
+// Mirrors world.js's own two "legitimately holding position because of
+// combat" cases exactly (see the tick() branches there), so tests that need
+// to tell a real hold apart from a movement stall are checking the actual
+// mechanism rather than a proxy that can drift out of sync with it:
+//   - a gun agent standing to shoot, gated on `rangeOf` the same way the
+//     halt itself is (an agent with a target that is OUT of range is not
+//     engaged -- it is supposed to keep moving, and a regression that
+//     freezes it anyway must still be caught, not laundered through here);
+//   - a melee agent that has closed to strike range and is holding there
+//     (the `chaseTarget` branch's `dist < COMBAT.meleeRange * 0.75` continue).
+// Both were burned independently: a proxy of merely "has a target" hid a
+// regression of the gunRange fix (see world.js), and omitting the melee case
+// entirely misattributed a melee chaser's legitimate hold to "frozen short of
+// its goal" (see the still-run tracker below).
+const isEngaged = (a, world) => {
+  if (!a.alive || a.target < 0) return false;
+  const t = world.agents[a.target];
+  const d = Math.hypot(t.x - a.x, t.z - a.z);
+  return a.chasing ? d < COMBAT.meleeRange * 0.75 : d <= rangeOf(a);
+};
 
 const SEEDS = Array.from({ length: 60 }, (_, i) => `orders-${i}`);
 const build = (seed, overrides) => {
@@ -122,11 +144,27 @@ test('a scripted dry run never leaves an agent frozen short of its goal', () => 
         ticks++;
         for (const a of world.agents) {
           const s = still.get(a.id);
-          // A live agent standing its ground to shoot (see world.js) is a
-          // deliberate hold, not the frozen-short-of-goal failure this test
+          // Physically pinned against a neighbour that is itself legitimately
+          // engaged: separation keeps this agent from moving even though IT
+          // isn't the one that chose to stop. That's bounded by how long the
+          // neighbour's fight lasts, not by anything a stall detector could
+          // ever recover from, so it is excluded from the count entirely
+          // (frozen, not reset -- see below) rather than folded into
+          // "legitimate hold".
+          const pinned = world.agents.some((b) => b.id !== a.id
+            && isEngaged(b, world)
+            && Math.hypot(a.x - b.x, a.z - b.z) < SIM.separation);
+          if (pinned) { s.x = a.x; s.z = a.z; continue; }
+          // A live agent standing its own ground in combat (see world.js) is
+          // a deliberate hold, not the frozen-short-of-goal failure this test
           // hunts for -- only count stillness against a moving order, never
-          // a combat halt or a corpse (whose path is null the instant it dies).
-          if (a.path && a.target < 0 && Math.hypot(a.x - s.x, a.z - s.z) < 1e-9) s.run++;
+          // this agent's own combat hold or a corpse (whose path is null the
+          // instant it dies). Checked with `isEngaged`, not merely "has a
+          // target": an agent with a target it cannot yet reach (out of gun
+          // range, not yet at strike range) is supposed to keep moving, and
+          // must still be caught here if a future regression freezes it
+          // anyway.
+          if (a.path && !isEngaged(a, world) && Math.hypot(a.x - s.x, a.z - s.z) < 1e-9) s.run++;
           else s.run = 0;
           s.x = a.x; s.z = a.z;
           if (s.run > maxStillRun) maxStillRun = s.run;
@@ -142,22 +180,31 @@ test('a scripted dry run never leaves an agent frozen short of its goal', () => 
     }
   }
 
-  // A generous ceiling on how long even the worst of the 50 runs may take,
-  // and on how long any single agent may hold a path while displacing
-  // nothing at all — comfortably above the ~25 ticks a legitimate door wait
-  // takes, so a door is never what trips this.
-  //
-  // 150, not the original 60: with casualties and a real outcome (Task 6),
-  // these runs reach room-entry formations they never used to survive to see,
-  // and four SWAT bunching into one doorway at running speed can wedge one of
-  // them against the frame for longer than a solo door wait -- measured worst
-  // across these 50 seeds is 84 ticks (`dry-12-8`), one seed, resolved by the
-  // same wall-stall recovery this test already exercises elsewhere (`_stallX`/
-  // `_stallCountdown`), not a hang. 150 keeps real margin over that without
-  // being so loose it stops meaning anything.
+  // A generous ceiling on how long even the worst of the 50 runs may take.
   assert.ok(worstTicks < MAX_TICKS,
     `worst run (${worstSeed}) used the entire ${MAX_TICKS / 60}s budget`);
-  assert.ok(maxStillRun < 150,
+  // How long any single agent may hold a path while displacing nothing at
+  // all, now that combat holds (its own, or a neighbour's within
+  // SIM.separation) are excluded above rather than folded into this number.
+  // What's left after that exclusion is not firefight duration -- it is the
+  // wall/goal-stall recovery machinery's own cycle time (GOAL_STALL_WINDOW=90
+  // to detect no progress, then NUDGE_TICKS=20 to escalate and clear a
+  // multi-agent formation jam), which is bounded by fixed constants rather
+  // than by how long two agents choose to keep shooting at each other. That
+  // is what makes this a property again rather than a number chasing
+  // whatever the worst sampled seed happened to do.
+  //
+  // Measured across 335 seeds with the exclusion in place (the 50 seeds this
+  // test itself samples, plus two independent 250-seed and 50-orders-N
+  // sweeps run to check the exclusion generalizes, not just fits this file's
+  // own sample): the ordinary case is a flat 25 ticks (the legitimate door
+  // wait this was always meant to clear), with one outlier at 118
+  // (`dry-11-26`, three SWAT bunched in a doorway with nobody in combat at
+  // all -- a pure multi-agent separation jam, confirmed by inspecting every
+  // nearby agent's `target`/`chasing` state at the tick it peaked). 200 keeps
+  // real margin over that measured worst without laundering an unbounded
+  // firefight through this number the way 150 did.
+  assert.ok(maxStillRun < 200,
     `an agent held a path with zero displacement for ${maxStillRun} consecutive ticks`);
 });
 

@@ -365,6 +365,28 @@ test('a dead agent stops moving and stays put', () => {
   assert.equal(a.path, null);
 });
 
+// Regression: orders.js's stageIssue snapshots its task list from the living
+// squad and drains one setGoal call per tick, staggered across several ticks
+// (see the comment on state.issueQueue there). If combat kills that agent in
+// one of the ticks between the snapshot and its own turn in the queue,
+// setGoal still ran against it -- tick()'s movement loop skips dead agents
+// entirely, so nothing downstream of that call was ever going to clear the
+// path/goal it wrote, and the corpse held it forever. Reproduced directly: a
+// corpse held a path for 1,981 ticks of zero displacement before this guard,
+// which is exactly what two of orders.test.js's stall trackers would have
+// misread as a live movement regression. Refusing here, in the one place a
+// goal is ever written, covers every caller (present and future), not only
+// orders.js's own staggered dispatch.
+test('setGoal refuses to command a corpse', () => {
+  const w = openRoom([{ x: 2, z: 2 }], 20);
+  const a = w.agents[0];
+  a.hp = 0; a.alive = false;
+  const ok = w.setGoal(a.id, { x: 10, z: 10 });
+  assert.equal(ok, false, 'setGoal reported success against a dead agent');
+  assert.equal(a.path, null, 'a corpse was handed a path');
+  assert.equal(a.goal, null, 'a corpse was handed a goal');
+});
+
 test('an agent halted to shoot takes no stall strikes', () => {
   // Regression for the interaction the spec calls out: an agent standing still
   // to fire makes no progress toward its goal, so the goal-stall detector
@@ -383,6 +405,63 @@ test('an agent halted to shoot takes no stall strikes', () => {
   }
   assert.equal(a._goalStrikes, 0,
     'a deliberately halted shooter accumulated stall strikes and will be nudged off its firing position');
+});
+
+// Regression: combat.js's canTarget acquires and HOLDS a target out to
+// COMBAT.sightRange (12m) -- a full 2m past COMBAT.gunRange (10m), the range
+// at which an attack could ever actually land. tick()'s "engaged with a gun"
+// halt used to fire on merely having a target, with no range check at all, so
+// two gun agents that could see but not hit each other locked onto one
+// another and both froze -- permanently, since the halt branch also exempts
+// itself from every stall detector (deliberately, for the in-range case).
+// The nearest existing coverage, the halted-shooter test just above, pins
+// `a.target = 0` -- the agent targeting ITSELF, at distance 0 -- so it passes
+// whether the range gate is present, absent, or inverted. This is the test
+// that actually depends on the gate: it drives two real, opposing gun agents
+// through combat.js's own acquisition rather than faking `target` by hand, at
+// two distances straddling the gunRange/sightRange gap.
+test('a gun agent only halts to shoot once actually within weapon range', () => {
+  // Both pairs move along z only, so the x-separation that decides range
+  // never drifts during the test -- the only thing that changes seed to seed
+  // is whether that fixed separation is inside gunRange or not.
+  const acquire = (w) => {
+    const [x, y] = w.agents;
+    for (let i = 0; i < COMBAT.scanInterval * 3; i++) w.tick();
+    assert.ok(x.target >= 0 && y.target >= 0,
+      'the two agents never acquired each other as combat targets -- this scenario tests nothing');
+    return { x, y };
+  };
+
+  // 11m apart: inside sightRange (12), outside gunRange (10). Both must keep
+  // moving toward their own goals -- there is nothing to shoot at yet.
+  const far = openRoom([{ x: 2, z: 5 }, { x: 13, z: 5 }], 20);
+  const [farA, farB] = far.agents;
+  farB.role = 'hostile'; // openRoom only spawns 'swat'; flip one to make them enemies.
+  farA.hp = 1e6; farB.hp = 1e6; // isolate the halt/move question from either side dying.
+  far.setGoal(farA.id, { x: 2, z: 15 });
+  far.setGoal(farB.id, { x: 13, z: 15 });
+  acquire(far);
+  const farStart = { ax: farA.x, az: farA.z, bx: farB.x, bz: farB.z };
+  for (let i = 0; i < 60; i++) far.tick();
+  assert.ok(Math.hypot(farA.x - farStart.ax, farA.z - farStart.az) > 0.5,
+    'agent a halted despite its target being out of gun range');
+  assert.ok(Math.hypot(farB.x - farStart.bx, farB.z - farStart.bz) > 0.5,
+    'agent b halted despite its target being out of gun range');
+
+  // 9m apart: inside gunRange. Both must stand and shoot instead.
+  const close = openRoom([{ x: 2, z: 5 }, { x: 11, z: 5 }], 20);
+  const [closeA, closeB] = close.agents;
+  closeB.role = 'hostile';
+  closeA.hp = 1e6; closeB.hp = 1e6;
+  close.setGoal(closeA.id, { x: 2, z: 15 });
+  close.setGoal(closeB.id, { x: 11, z: 15 });
+  acquire(close);
+  const closeStart = { ax: closeA.x, az: closeA.z, bx: closeB.x, bz: closeB.z };
+  for (let i = 0; i < 60; i++) close.tick();
+  assert.ok(Math.hypot(closeA.x - closeStart.ax, closeA.z - closeStart.az) < 1e-9,
+    'agent a moved despite being within gun range of its target');
+  assert.ok(Math.hypot(closeB.x - closeStart.bx, closeB.z - closeStart.bz) < 1e-9,
+    'agent b moved despite being within gun range of its target');
 });
 
 test('a chasing melee agent closes on its target and holds at strike range', () => {
