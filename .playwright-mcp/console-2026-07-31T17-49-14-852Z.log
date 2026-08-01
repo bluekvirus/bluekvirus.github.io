@@ -1,8 +1,0 @@
-[     204ms] [LOG] BJS - [10:49:15]: Babylon.js v9.18.1 - WebGL2 - Parallel shader compilation @ https://cdn.jsdelivr.net/npm/babylonjs@9.18.1/babylon.js:0
-[     308ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://localhost:8080/favicon.ico:0
-[   79553ms] [LOG] BJS - [10:50:34]: Babylon.js v9.18.1 - WebGL2 - Parallel shader compilation @ https://cdn.jsdelivr.net/npm/babylonjs@9.18.1/babylon.js:0
-[  132371ms] [LOG] BJS - [10:51:27]: Babylon.js v9.18.1 - WebGL2 - Parallel shader compilation @ https://cdn.jsdelivr.net/npm/babylonjs@9.18.1/babylon.js:0
-[  133988ms] [LOG] BJS - [10:51:28]: Babylon.js v9.18.1 - WebGL2 - Parallel shader compilation @ https://cdn.jsdelivr.net/npm/babylonjs@9.18.1/babylon.js:0
-[  174201ms] [LOG] BJS - [10:52:09]: Babylon.js v9.18.1 - WebGL2 - Parallel shader compilation @ https://cdn.jsdelivr.net/npm/babylonjs@9.18.1/babylon.js:0
-[  467967ms] [LOG] BJS - [10:57:02]: Babylon.js v9.18.1 - WebGL2 - Parallel shader compilation @ https://cdn.jsdelivr.net/npm/babylonjs@9.18.1/babylon.js:0
-[  469067ms] [LOG] BJS - [10:57:03]: Babylon.js v9.18.1 - WebGL2 - Parallel shader compilation @ https://cdn.jsdelivr.net/npm/babylonjs@9.18.1/babylon.js:0
