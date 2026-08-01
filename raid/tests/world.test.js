@@ -120,6 +120,201 @@ test('SIM constants are frozen', () => {
   assert.throws(() => { SIM.step = 1; });
 });
 
+// A bare open room with agents dropped into it at given points. The stall and
+// recovery machinery below is driven directly rather than coaxed out of a
+// generated map: measured across 790,368 agent-ticks of real missions the
+// right-of-way yield fired zero times and the nudge fourteen, so waiting for a
+// seed to produce one is not a test strategy. Every branch these exercise is
+// live code that has already been the root cause of three separate hangs on
+// this branch, and until now only one of them had a regression test.
+const openRoom = (points, span = 12) => {
+  const plan = {
+    seed: 'stall-machinery',
+    config: { wallThickness: 0.1 },
+    bounds: { x: 0, z: 0, w: span, d: span },
+    cells: [{ id: 0, x: 0, z: 0, w: span, d: span }],
+    doors: [],
+    adjacency: {},
+    walls: [],
+  };
+  const mission = {
+    spawns: {
+      swat: points.map((p) => ({ ...p, facing: 0, cellId: 0 })),
+      hostiles: [],
+      hostage: { x: 1, z: span - 1, facing: 0, cellId: 0 },
+      extraction: { x: 1, z: span - 1 },
+    },
+  };
+  return createWorld(plan, mission, []);
+};
+
+// Hold agents exactly where they are, whatever they try to do. This is the
+// one situation the goal-stall detector exists for and the hardest to arrange
+// honestly: agents are dimensionless points to the collision code, so two of
+// them will slide through each other (measured: 0.054m apart inside a
+// 0.25m-wide tube) rather than deadlock the way the machinery assumes.
+const pin = (world, ticks, onTick) => {
+  const held = world.agents.map((a) => ({ x: a.x, z: a.z }));
+  for (let i = 1; i <= ticks; i++) {
+    world.tick();
+    world.agents.forEach((a, j) => { a.x = held[j].x; a.z = held[j].z; });
+    if (onTick) onTick(i);
+  }
+};
+
+test('a frozen agent accumulates strikes on a fixed cadence', () => {
+  const w = openRoom([{ x: 2, z: 2 }]);
+  const a = w.agents[0];
+  assert.ok(w.setGoal(0, { x: 10, z: 10 }), 'setGoal should succeed on an empty room');
+
+  const strikes = [];
+  let last = 0;
+  pin(w, 400, (tick) => {
+    if (a._goalStrikes !== last) { strikes.push(tick); last = a._goalStrikes; }
+  });
+
+  assert.ok(a._goalStrikes >= 4,
+    `a permanently stuck agent only reached ${a._goalStrikes} strikes in 400 ticks — the detector stopped counting`);
+  // One per window, rather than a burst that then gives up.
+  const gaps = strikes.slice(1).map((t, i) => t - strikes[i]);
+  assert.ok(gaps.every((g) => g === gaps[0]),
+    `strikes did not accrue on a fixed cadence: ${JSON.stringify(strikes)}`);
+});
+
+test('an agent merely oscillating still accumulates strikes — the best-distance ratchet never slips', () => {
+  // The live-lock that a frozen agent cannot expose. Re-arming the baseline to
+  // the CURRENT distance rather than the best ever reached lets an agent drift
+  // 10cm away and back and have the return trip count as fresh progress,
+  // zeroing the strike count every time. Nothing is stuck — the agent moves
+  // the whole while, so no "stuck" signal fires — and one agent and the
+  // hostage traded centimetres for 9,000 ticks with the detector reporting
+  // progress throughout. A frozen agent's distance is constant, so re-arming
+  // to "current" and to "best" agree exactly and the bug hides; it only shows
+  // up under movement, which is why this test moves the agent.
+  const w = openRoom([{ x: 2, z: 2 }]);
+  const a = w.agents[0];
+  const goal = { x: 10, z: 10 };
+  assert.ok(w.setGoal(0, goal));
+
+  const base = { x: a.x, z: a.z };
+  const span = Math.hypot(goal.x - base.x, goal.z - base.z);
+  const ux = (goal.x - base.x) / span;
+  const uz = (goal.z - base.z) / span;
+  const AMPLITUDE = 0.1; // comfortably over GOAL_STALL_EPS (0.02)
+
+  let best = Infinity;
+  let slipped = 0;
+  for (let i = 1; i <= 600; i++) {
+    w.tick();
+    const swing = i % 2 === 0 ? AMPLITUDE : 0;
+    a.x = base.x + ux * swing;
+    a.z = base.z + uz * swing;
+    if (a._goalBestDist > best + 1e-9) slipped++;
+    best = Math.min(best, a._goalBestDist);
+  }
+
+  assert.equal(slipped, 0,
+    'the best-distance baseline rose while the goal was unchanged — the ratchet slipped, so oscillation reads as progress');
+  assert.ok(a._goalStrikes >= 4,
+    `an oscillating agent reached only ${a._goalStrikes} strikes in 600 ticks — the detector is blind to live-lock again`);
+});
+
+test('the tie-breaking nudge is a bounded impulse that expires and escalates', () => {
+  const w = openRoom([{ x: 2, z: 2 }]);
+  const a = w.agents[0];
+  w.setGoal(0, { x: 10, z: 10 });
+
+  // Regression for fix round 4, whose root cause was the round-3 recovery
+  // itself: left standing, a bias this size replaces the goal direction
+  // outright and the agent slides along a wall forever at a healthy speed —
+  // a live-lock every "is it stuck" signal reports as a moving agent, with the
+  // escalation pinning the bias at its cap so the recovery becomes the thing
+  // preventing recovery. It must therefore be an impulse: arrive, expire,
+  // and come back harder only if the stand-off survived it.
+  const bursts = [];
+  let current = null;
+  pin(w, 600, () => {
+    if (a._nudgeTicks > 0 && !current) current = { bias: Math.abs(a._nudgeBias), ticks: [] };
+    if (current) current.ticks.push(a._nudgeTicks);
+    if (current && a._nudgeTicks === 0) { bursts.push(current); current = null; }
+  });
+
+  assert.ok(bursts.length >= 2, `expected repeated nudge bursts, saw ${bursts.length}`);
+  for (const burst of bursts) {
+    assert.ok(burst.ticks.length < 60,
+      `a nudge burst ran for ${burst.ticks.length} ticks — it is a standing bias again, not an impulse`);
+    assert.equal(burst.ticks.at(-1), 0, 'a nudge burst did not end with the counter cleared');
+    // Non-increasing, by at most one a tick. Not strictly one a tick: the
+    // impulse is spent on ticks the agent actually steers, and a tick spent
+    // arriving at a waypoint returns early before the nudge is applied, so the
+    // counter legitimately holds for a tick there. What matters is that it
+    // only ever goes down, which is what makes the impulse bounded.
+    const counting = burst.ticks.slice(0, -1);
+    assert.ok(counting.every((t, i) => i === 0 || t === counting[i - 1] || t === counting[i - 1] - 1),
+      `a nudge burst did not count down monotonically: ${JSON.stringify(burst.ticks)}`);
+  }
+  assert.ok(bursts.at(-1).bias > bursts[0].bias,
+    `the nudge did not escalate across bursts (${bursts[0].bias} then ${bursts.at(-1).bias}) — a persistent deadlock needs an answer that keeps growing`);
+  assert.equal(a._nudgeBias, 0, 'the bias outlived its impulse');
+});
+
+test('right of way in a stand-off goes to the lowest id, and only one side gives way', () => {
+  // Two agents jammed against each other inside separation range, both
+  // getting nowhere. Exactly one has to retreat: nudging both aside only
+  // decides which of them misses the opening, so the rule must be
+  // asymmetric and derived from nothing but ids, or a seed stops replaying.
+  const w = openRoom([{ x: 5, z: 5 }, { x: 5.3, z: 5 }]);
+  const [a, b] = w.agents;
+  w.setGoal(0, { x: 10, z: 10 });
+  w.setGoal(1, { x: 10, z: 10 });
+
+  let aEverYielded = false;
+  let bYieldedTo = -1;
+  let aMaxNudge = 0;
+  let bMaxNudge = 0;
+  pin(w, 400, () => {
+    if (a._yieldTicks > 0) aEverYielded = true;
+    if (b._yieldTicks > 0) bYieldedTo = b._yieldTo;
+    aMaxNudge = Math.max(aMaxNudge, Math.abs(a._nudgeBias));
+    bMaxNudge = Math.max(bMaxNudge, Math.abs(b._nudgeBias));
+  });
+
+  assert.equal(bYieldedTo, 0, 'the higher id did not give way to the lower id');
+  assert.equal(aEverYielded, false, 'the lower id gave way too — both sides retreating solves nothing');
+  assert.ok(aMaxNudge > 0, 'the agent with right of way never got a nudge to break the tie with');
+  assert.equal(bMaxNudge, 0, 'the yielding agent was nudged as well as backing off; it should do one or the other');
+});
+
+test('a replan keeps a short raw lead and smooths the rest of the route', () => {
+  // replan() used to return the raw grid route entire and never re-smooth, so
+  // an agent that jammed once ran the whole rest of its journey as a
+  // cell-by-cell staircase: 17.4% of all agent-ticks across 100 missions, at a
+  // measurably reduced speed. The raw stepping is what gets an agent out of
+  // the jam it is actually in, so the lead stays raw — but only the lead.
+  const w = openRoom([{ x: 2, z: 2 }], 24);
+  const a = w.agents[0];
+  w.setGoal(0, { x: 22, z: 22 });
+
+  const before = a.path;
+  const held = { x: a.x, z: a.z };
+  for (let i = 0; i < 200 && a.path === before; i++) { w.tick(); a.x = held.x; a.z = held.z; }
+  assert.notEqual(a.path, before, 'the stall never triggered a replan, so this test proves nothing');
+
+  // The raw route across this room is ~81 single-cell waypoints. Anything near
+  // that means the smoothing pass was dropped again.
+  assert.ok(a.path.length <= 12,
+    `replan produced ${a.path.length} waypoints — that is the raw grid staircase, not a smoothed route`);
+
+  const segment = (i) => Math.hypot(a.path[i].x - a.path[i - 1].x, a.path[i].z - a.path[i - 1].z);
+  const cellDiagonal = w.grid.cell * Math.SQRT2 + 1e-6;
+  for (let i = 1; i <= 3; i++) {
+    assert.ok(segment(i) <= cellDiagonal,
+      `waypoint ${i} is ${segment(i).toFixed(3)}m from the last — the raw lead that gets an agent out of a jam was smoothed away`);
+  }
+  assert.ok(segment(4) > 1,
+    'the route past the raw lead was not smoothed at all');
+});
+
 test('a wall-corner jam still recovers via replan even with a closed door further along the same segment', () => {
   // Regression for fix round 2: door detection used to scan the WHOLE
   // segment from an agent's position to its next waypoint
