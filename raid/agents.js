@@ -19,7 +19,17 @@ const RUN_MIN = 2.2;
 // anything wider than both is "sideways" (see directionalClip below).
 const FACING_CONE = Math.PI / 4;
 
-const CLIP_NAMES = ['Idle', 'Walk', 'Run', 'Run_Back', 'Run_Left', 'Run_Right'];
+const CLIP_NAMES = [
+  'Idle', 'Walk', 'Run', 'Run_Back', 'Run_Left', 'Run_Right',
+  'Idle_Gun_Pointing', 'Idle_Gun_Shoot', 'Gun_Shoot', 'Run_Shoot',
+  'Sword_Slash', 'HitRecieve', 'Death',
+];
+
+// How long, in sim ticks, a one-shot clip keeps being requested after the
+// event that triggered it. The sim reports an instant ("fired on tick 812");
+// the renderer needs a duration, and these are what turn one into the other.
+const FIRE_TICKS = 18;   // ~0.3s of muzzle animation per shot
+const FLINCH_TICKS = 24; // ~0.4s of reacting to being hit
 
 /** A fresh per-clip weight/playing/started bookkeeping block for one rig
  * (one figure's own skeleton and groups), same shape whether it is set up up
@@ -75,6 +85,32 @@ function directionalClip(agent) {
   return rel > 0 ? 'Run_Left' : 'Run_Right';
 }
 
+/**
+ * Which clip an agent calls for, combat first. Order matters and is a
+ * priority, not a sequence: a dying agent is not also flinching, and an agent
+ * that is firing should be seen firing even though it is technically also
+ * standing still.
+ *
+ * `world.ticks` is passed in because the sim records combat events as tick
+ * stamps rather than as durations — it has no notion of how long anything
+ * should be shown for, which is exactly right for a module that must run
+ * headless at 340k ticks/s.
+ */
+function combatClip(agent, ticks) {
+  if (!agent.alive) return 'Death';
+  if (agent.hitAt >= 0 && ticks - agent.hitAt < FLINCH_TICKS) return 'HitRecieve';
+
+  const firing = agent.firedAt >= 0 && ticks - agent.firedAt < FIRE_TICKS;
+  if (firing && agent.weapon === 'melee') return 'Sword_Slash';
+  if (firing) return agent.speed > WALK_MIN ? 'Run_Shoot' : 'Gun_Shoot';
+
+  // Holding a target but between shots: weapon up, not slack at the side.
+  if (agent.target >= 0 && agent.weapon === 'gun' && agent.speed < WALK_MIN) {
+    return 'Idle_Gun_Pointing';
+  }
+  return directionalClip(agent);
+}
+
 export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
   // One rig per FIGURE now, not per skeleton. Every figure owns its skeleton
   // and its animation groups (see cast.js), so the old "four SWAT share one
@@ -125,6 +161,12 @@ export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
   // coherent pose, just briefly a three-way rather than two-way mix. A group
   // is only stopped once its RAW weight reaches exactly 0 (never based on
   // its post-normalisation value), so it never snaps to bind pose mid-fade.
+  // Death is the one clip that must not loop — a corpse repeatedly collapsing
+  // is the kind of thing that reads as a bug from across the room. Playing it
+  // non-looping leaves Babylon holding the final frame, which is exactly the
+  // pose wanted.
+  const startClip = (g, name) => g.start(name !== 'Death', 1.0, g.from, g.to, false);
+
   const crossfade = (rig, name, dt) => {
     if (!rig.started) {
       // Nothing has ever played on this rig: snap straight to the first
@@ -135,7 +177,7 @@ export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
         if (!g) continue;
         rig.weight[n] = n === name ? 1 : 0;
         if (n === name) {
-          g.start(true, 1.0, g.from, g.to, false);
+          startClip(g, n);
           g.setWeightForAllAnimatables(1);
           rig.playing.add(n);
         }
@@ -150,7 +192,7 @@ export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
       let w = rig.weight[n];
       if (w === target) continue;
       if (target === 1 && !rig.playing.has(n)) {
-        g.start(true, 1.0, g.from, g.to, false);
+        startClip(g, n);
         rig.playing.add(n);
       }
       w = target === 1 ? Math.min(1, w + step) : Math.max(0, w - step);
@@ -239,7 +281,7 @@ export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
       // whole shared rig.
       for (const [i, rig] of rigs) {
         const a = world.agents[i];
-        crossfade(rig, a ? directionalClip(a) : 'Idle', dt);
+        crossfade(rig, a ? combatClip(a, world.ticks) : 'Idle', dt);
       }
     },
 
