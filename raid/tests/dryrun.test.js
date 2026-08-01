@@ -103,7 +103,19 @@ test('a full headless mission completes cleanly at every room count', () => {
       // Total distance alone is satisfied by the patrolling hostiles pacing
       // their rooms for the whole run — a frozen SWAT squad would still pass
       // it. Require the squad specifically to have covered real ground.
-      for (const a of world.agents.filter((x) => x.role === 'swat' && x.alive)) {
+      //
+      // Deliberately NOT filtered on `.alive`: a squad wipe is now a designed
+      // outcome (not a rare accident), and filtering to survivors makes this
+      // loop iterate zero agents on any seed where every SWAT dies — silently
+      // asserting nothing on exactly the seeds where a frozen squad would be
+      // hardest to tell apart from a genuinely fought-and-lost one. Every
+      // SWAT agent's tracked distance already freezes at the tick it dies
+      // (a corpse cannot move), so it still reads as real ground covered
+      // before death, not zero -- checked against 750 seeds' worth of dead
+      // SWAT with this exact tuning: minimum distance covered before dying
+      // was 5.94m, comfortably clear of the 5m bar, so this does not turn
+      // into a flaky assertion on a legitimate early casualty.
+      for (const a of world.agents.filter((x) => x.role === 'swat')) {
         assert.ok(distance.get(a.id) > 5,
           `${seed}: SWAT agent ${a.id} travelled only ${distance.get(a.id).toFixed(1)}m — a frozen squad would still pass the aggregate distance check`);
       }
