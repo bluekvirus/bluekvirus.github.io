@@ -61,9 +61,11 @@ export function createCombat({ grid, agents, rng, isDoorOpen, step }) {
     for (const b of agents) {
       if (!canTarget(a, b)) continue;
       const d = distance(a, b);
-      // Ties break on the lower id, so a seed replays identically regardless
-      // of how the agents array happens to be ordered.
-      if (d < bestDist) { bestDist = d; best = b.id; }
+      // Ties break explicitly on the lower id (never on iteration order), so
+      // a seed replays identically regardless of how the `agents` array
+      // happens to be ordered — a splice on death or a re-sort elsewhere
+      // must not be able to change which candidate wins a distance tie.
+      if (d < bestDist || (d === bestDist && b.id < best)) { bestDist = d; best = b.id; }
     }
     return best;
   };
