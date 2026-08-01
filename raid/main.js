@@ -20,6 +20,7 @@ const seedInput = document.getElementById('seed');
 const roomsInput = document.getElementById('rooms');
 const roomsValue = document.getElementById('roomsValue');
 const statsEl = document.getElementById('stats');
+const outcomeEl = document.getElementById('outcome');
 
 if (params.get('seed')) seedInput.value = params.get('seed');
 
@@ -54,6 +55,9 @@ function regenerate(seed = seedInput.value) {
   }
   plan = nextPlan;
   mission = nextMission;
+
+  outcomeEl.textContent = '';
+  delete outcomeEl.dataset.state;
 
   // Tear the previous build down first. Rebuilding over the top leaks a whole
   // level's meshes and materials on every click of Regenerate.
@@ -182,6 +186,22 @@ engine.runRenderLoop(() => {
   if (running && world) advance(dt * SPEEDS[Number(speedInput.value)]);
   agentBinding?.sync(world ? accumulator / SIM.step : 0, dt);
   doorBinding?.sync();
+
+  // Casualty count while the fight is live, verdict once it is not. Guarded
+  // because `world`/`orders` are briefly absent while a fresh generation's
+  // failed floorplan/mission attempt leaves them at their previous (null)
+  // value, and read fresh each frame since regenerate() reassigns `orders`.
+  if (world && orders) {
+    if (orders.outcome) {
+      outcomeEl.textContent = orders.outcome === 'success' ? 'HOSTAGE EXTRACTED' : 'MISSION FAILED';
+      outcomeEl.dataset.state = orders.outcome;
+    } else {
+      const alive = (role) => world.agents.filter((a) => a.role === role && a.alive).length;
+      outcomeEl.textContent = `SWAT ${alive('swat')}/4 · HOSTILES ${alive('hostile')}/7`;
+      outcomeEl.dataset.state = 'live';
+    }
+  }
+
   scene.render();
 });
 window.addEventListener('resize', () => engine.resize());
