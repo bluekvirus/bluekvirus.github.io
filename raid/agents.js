@@ -21,18 +21,13 @@ const FACING_CONE = Math.PI / 4;
 
 const CLIP_NAMES = ['Idle', 'Walk', 'Run', 'Run_Back', 'Run_Left', 'Run_Right'];
 
-function ownedGroups(skeleton, scene) {
-  const nodes = new Set(skeleton.bones.map((b) => b.getTransformNode?.()).filter(Boolean));
-  return scene.animationGroups.filter((g) => g.targetedAnimations.some((ta) => nodes.has(ta.target)));
-}
-
 /** A fresh per-clip weight/playing/started bookkeeping block for one rig
- * (one shared skeleton), same shape whether it is set up up front (SWAT,
- * hostiles) or later, the moment the hostage is rescued (see sync() below). */
-function makeRig(skeleton, scene) {
-  const groups = ownedGroups(skeleton, scene);
+ * (one figure's own skeleton and groups), same shape whether it is set up up
+ * front (SWAT, hostiles) or later, the moment the hostage is rescued (see
+ * sync() below). */
+function makeRig(figure) {
   return {
-    groups: Object.fromEntries(CLIP_NAMES.map((n) => [n, groups.find((g) => g.name === n)])),
+    groups: Object.fromEntries(CLIP_NAMES.map((n) => [n, figure.groups.find((g) => g.name === n)])),
     // Per-clip weight, independent of any single "from -> to" pair. A clip
     // request just becomes the one name with target weight 1 (everything
     // else targets 0); a change of mind mid-fade is handled for free by
@@ -81,9 +76,11 @@ function directionalClip(agent) {
 }
 
 export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
-  // One clip set per SKELETON, not per figure: the pack shares a skeleton
-  // between every figure built from the same model (four SWAT, seven
-  // hostiles), so starting a clip for one starts it for all of them. The
+  // One rig per FIGURE now, not per skeleton. Every figure owns its skeleton
+  // and its animation groups (see cast.js), so the old "four SWAT share one
+  // pose, drive it from the fastest of them" constraint is gone — which is
+  // what makes it possible for one agent to fire while another sprints, and
+  // for one hostile to die without taking the other six down with it. The
   // hostage is excluded from clip playback ONLY — its floor pose is held by
   // written-back TransformNode values (see seated.js), and starting any clip
   // would overwrite those bone-local values and destroy the pose. Moving the
@@ -91,13 +88,12 @@ export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
   // its position and facing are synced like every other agent below — the
   // hostage must be seen leaving with the squad for the rescue to read as
   // having happened. Its own rig is added later, the moment orders reports
-  // the rescue — see the `hostageRig` handling in sync() below.
-  const rigs = new Map();
-  for (const fig of cast.figures) {
-    if (fig.role === 'hostage') continue;
-    if (rigs.has(fig.skeleton)) continue;
-    rigs.set(fig.skeleton, makeRig(fig.skeleton, scene));
-  }
+  // the rescue — see the `hostageRescued` handling in sync() below.
+  const rigs = new Map(); // agent index -> rig
+  cast.figures.forEach((fig, i) => {
+    if (fig.role === 'hostage') return; // floor pose; its rig is added on rescue
+    rigs.set(i, makeRig(fig));
+  });
   const hostageFigure = cast.figures.find((fig) => fig.role === 'hostage');
   let hostageRescued = false;
 
@@ -235,22 +231,15 @@ export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
       if (!hostageRescued && hostageFigure && orders?.hostageReached) {
         hostageRescued = true;
         hostageFigure.standUp();
-        rigs.set(hostageFigure.skeleton, makeRig(hostageFigure.skeleton, scene));
+        rigs.set(cast.figures.indexOf(hostageFigure), makeRig(hostageFigure));
       }
 
-      // Clip choice per rig, from the fastest agent on that rig — with a shared
-      // skeleton there is only one pose to give them, so a walking group should
-      // look like it is walking. Direction (see directionalClip) is read off
-      // that same fastest agent, not averaged across the rig's agents: the
-      // shared skeleton can only show one pose at a time regardless, exactly
-      // as speed already worked before directional clips existed.
-      for (const [skeleton, rig] of rigs) {
-        let fastest = null;
-        for (let i = 0; i < world.agents.length; i++) {
-          const a = world.agents[i];
-          if (cast.figures[i]?.skeleton === skeleton && (!fastest || a.speed > fastest.speed)) fastest = a;
-        }
-        crossfade(rig, fastest ? directionalClip(fastest) : 'Idle', dt);
+      // Clip choice per figure now that every figure owns its own skeleton
+      // and groups — no more picking a single "fastest agent" to represent a
+      // whole shared rig.
+      for (const [i, rig] of rigs) {
+        const a = world.agents[i];
+        crossfade(rig, a ? directionalClip(a) : 'Idle', dt);
       }
     },
 
