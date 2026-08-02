@@ -176,18 +176,27 @@ Starting constants — deliberately a starting point, tuned by measurement durin
 implementation and reported by the sweep, never asserted:
 
 ```
-sightRange     12 m
+sightRange     12 m         chargeRange    10 m
 gunRange       10 m
 meleeRange     1.2 m
 gunCooldown    0.8 s        meleeCooldown  1.1 s
 gunDamage      25           meleeDamage    35
 swatHp         75           hostileHp      80        hostageHp  40
-swatAccuracy   0.80         hostileAccuracy 0.75     meleeAccuracy 0.75
+swatAccuracy   0.80         hostileAccuracy 0.70     meleeAccuracy 0.75
 ```
 
 (Measured and moved during Task 10's tuning pass — see that task's ledger and
-report for the sweep numbers behind each change; the values above are what
-shipped, not the ones originally written here.)
+report for the sweep numbers behind each change; further retuned during the
+melee follow-up task, see `melee-brief.md`/`melee-report.md`, which added
+`chargeRange` — how close a melee hostile lets its target get before
+charging, gated well short of `sightRange` so it does not break into a run
+from the far edge of acquisition — and moved `hostileAccuracy` 0.75 -> 0.70
+to hold the mission failure rate inside its target band once chargers
+became genuinely effective, in preference to raising `swatAccuracy` (tried
+first; reverted because the same failure-rate target was reachable at a
+strictly better melee engagement rate through `hostileAccuracy` instead —
+see the melee report for the paired-seed numbers). The values above are
+what shipped, not the ones originally written here.)
 
 Gun hit chance is `accuracy * (1 - 0.5 * distance / gunRange)`, so a shot at
 the edge of range lands half as often as one at point-blank. Melee uses
@@ -210,7 +219,10 @@ this phase targets) and broke an unrelated pre-existing regression test
 (`world.test.js`'s `'agents keep apart'`, which does not expect a corpse
 mid-scenario). `swatHp 75` is what actually produces a genuine contest;
 "four trained shooters" still describes headcount and accuracy (SWAT keep
-the accuracy edge, `swatAccuracy 0.80 > hostileAccuracy 0.75`), not raw
+the accuracy edge, `swatAccuracy 0.80 > hostileAccuracy 0.70` — widened
+during the melee follow-up task from the original 0.80 vs 0.75, moving
+`hostileAccuracy` down rather than `swatAccuracy` up to hold the failure
+band once melee chargers became effective; see `melee-report.md`), not raw
 durability, which the sweep shows needs to run the other way for either side
 to lose often enough to matter.
 

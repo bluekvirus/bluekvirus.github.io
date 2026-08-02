@@ -15,14 +15,19 @@ export const COMBAT = Object.freeze({
   meleeRange: 1.2,
   // How close a melee hostile lets its target get before it breaks into a
   // charge, rather than the instant it acquires a target at up to sightRange
-  // (12m) in the open. Chosen by measurement (see melee-brief.md and
-  // melee-report.md): swept 3-10 on paired 450-mission families with the
-  // sprint fix already in place. Below 5 the charge barely improves on the
-  // pre-fix engagement rate at all; at and above 6 engagement roughly
-  // doubles and keeps climbing only slowly past it, while every point higher
-  // costs more exposure and pushes mission failure up further. 6 is the
-  // smallest value that gets the full doubling.
-  chargeRange: 6,
+  // (12m) in the open. This does NOT buy engagement -- engagement rises
+  // monotonically with chargeRange in every sweep that measured it (4->8.1%
+  // ever-swung, 10->17.1%), so a lower value only ever costs it. What it
+  // buys is less exposure per charge: at identical accuracy, paired,
+  // chargeRange 6 vs 10 differ by 2.4-2.6pp of engagement for only
+  // 0.06-0.24pp of failure rate -- a bad trade an earlier pass got wrong by
+  // reading a single 450-mission family's noise (family spread is +-2pp) as
+  // a trend. 10 keeps a sliver of margin under sightRange (12) so a charger
+  // still never breaks into a run from the absolute far edge of
+  // acquisition, while giving up none of the engagement that a tighter gate
+  // (6) cost for essentially no reduction in failure rate. See
+  // melee-brief.md and melee-report.md for the full sweep.
+  chargeRange: 10,
   gunCooldown: 0.8,
   meleeCooldown: 1.1,
   gunDamage: 25,
@@ -30,19 +35,21 @@ export const COMBAT = Object.freeze({
   swatHp: 75,
   hostileHp: 80,
   hostageHp: 40,
-  // Retuned 0.80 -> 0.85 alongside chargeRange. NOT a melee-specific lever
-  // (meleeDamage/meleeAccuracy were already measured inert -- see
-  // melee-brief.md -- and touching them again would just repeat that dead
-  // end): this is squad rifle accuracy, raised because effective chargers
-  // now cost the squad more casualties across the whole engagement, gun
-  // fights included, not only melee ones. Raw failure rate at chargeRange=6
-  // with this left at 0.80 averaged 18.9% over seven paired 450-mission
-  // families (range 17.1-20.7%, two families over the 19.2% band top); at
-  // 0.85 every one of the same seven families lands inside the 13.3-19.2%
-  // band (13.6-18.9%, average 15.9%) with melee engagement essentially
-  // unchanged.
-  swatAccuracy: 0.85,
-  hostileAccuracy: 0.75,
+  swatAccuracy: 0.80,
+  // Retuned 0.75 -> 0.70 to bring mission failure back inside the held-out
+  // 13.3-19.2% band once chargers became effective, WITHOUT touching
+  // meleeAccuracy (measured inert in an earlier task -- see melee-brief.md
+  // -- and off-limits regardless) or swatAccuracy (an earlier pass tried
+  // raising that instead; reverted here because this lever does strictly
+  // better at the same failure rate -- see melee-report.md). accuracyOf()
+  // routes a `weapon === 'melee'` agent to meleeAccuracy unconditionally, so
+  // this constant governs GUN-armed hostiles only and can never touch a
+  // charger's own hit chance; it works purely by hostiles losing more of
+  // their own gunfights, which costs the squad less overall than making
+  // SWAT's rifles more accurate did for the same failure-rate target. SWAT
+  // keeps its accuracy edge (0.80 > 0.70, wider than the original 0.80 vs
+  // 0.75 -- see docs/superpowers/specs/2026-08-01-raid-combat-design.md).
+  hostileAccuracy: 0.70,
   meleeAccuracy: 0.75,
   // Ticks between target scans for any one agent. Twelve agents each testing
   // line of sight to eleven others every tick is 132 grid traversals per tick

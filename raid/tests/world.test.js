@@ -119,14 +119,38 @@ test('agents keep apart', () => {
   // tick regardless of who calls it), and a hostile's exact position at
   // every tick now depends on its charge/patrol state (this task's melee
   // fix), which perturbs the single shared combat rng stream and, through
-  // it, which SWAT member gets shot when -- a butterfly effect on an
-  // otherwise-unrelated seed's exact final positions, not a movement defect.
+  // it, which SWAT member gets shot when.
+  //
+  // The mechanism that actually squeezes two SWAT together is more specific
+  // than "some rng draw landed differently somewhere": by tick 1800 the
+  // squad is frozen in a firefight, and the gun-halt branch in world.js sets
+  // vx/vz to 0 and `continue`s -- skipping that agent's own separation-force
+  // application entirely for as long as it holds. A halted shooter is read
+  // by everyone else's separation loop (so it still repels a moving
+  // neighbour) but never itself recoils from one pressing in, so a
+  // still-advancing SWAT gets only half the usual two-sided push and can
+  // settle closer than either side manages when both are still navigating.
+  // No SWAT dies on this seed either way (all four alive, both with and
+  // without the melee fix) -- this is a positioning effect, not a casualty
+  // one. A melee hostile does close on the squad in this run (to 1.875m at
+  // its nearest, on both the shipped config and this task's retune) but
+  // that is still well outside SIM.separation (0.75m), so it is not what is
+  // pressing these two SWAT together either; it is one more source of the
+  // timing perturbation that puts the squad in this exact halted formation
+  // at this exact tick.
+  //
   // Measured directly: with hostiles left live, this exact seed lands two
   // SWAT members 0.26m apart at tick 1800 with the melee fix in place
-  // (0.56m without it) -- and with a genuinely broken separation force
+  // (0.56m without it). But tick 1800 was always a single-frame spot check
+  // of an already-settled cluster, never a proof of a running invariant:
+  // the true minimum gap between any two SWAT over the full 1800-tick run
+  // is 0.140m with the fix (0.119m without it) -- both already under the
+  // 0.3m this test asserts on, just not at the one tick it happened to
+  // sample. And with a genuinely broken separation force
   // (SIM.separationForce zeroed) the same seed collapses two agents to
-  // 0.001m apart, so the gap this asserts on is still a meaningful signal,
-  // not a rubber stamp. Neutralizing the hostiles removes the confound
+  // 0.001m apart, so the gap this asserts on is still a meaningful signal
+  // against an actually-broken separation term, not a rubber stamp for one
+  // that only mostly works. Neutralizing the hostiles removes the confound
   // instead of loosening the bar: identical squad, identical destination,
   // just without combat's rng-driven timing noise.
   for (const h of w.agents) if (h.role === 'hostile') h.alive = false;
@@ -572,7 +596,8 @@ test('a chasing melee agent closes on its target and holds at strike range', () 
   // chaser: a melee agent now only breaks into a charge once its target has
   // closed to chargeRange (see the charge-range gate in combat.js), so
   // starting further out than that would never enter the chasing state this
-  // test is about at all -- that gate has its own dedicated test below.
+  // test is about at all -- that gate has its own dedicated test in
+  // combat.test.js.
   const startDist = COMBAT.chargeRange - 1;
   const w = openRoom([{ x: 2, z: 2 }, { x: 2 + startDist, z: 2 }], 20);
   const [chaser, mark] = w.agents;

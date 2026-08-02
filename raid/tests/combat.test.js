@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { COMBAT, createCombat, isEnemy, hitChance } from '../sim/combat.js';
 import { buildNavGrid } from '../sim/navgrid.js';
 import { makeRng } from '../rng.js';
+import { SIM } from '../sim/world.js';
 
 // A bare 20x20 room with an optional blocking prop, and agents placed by hand.
 // Combat is easier to test on geometry chosen for the test than on a generated
@@ -344,4 +345,32 @@ test('a chasing melee agent sprints; a merely-holding one walks', () => {
   assert.equal(agents[0].chasing, false, 'target retreated out of chargeRange but chasing stayed true');
   assert.equal(agents[0].wants, WALK,
     'a melee agent that stopped chasing should drop back to its patrol (walk) speed, not keep sprinting');
+});
+
+test("createCombat's default runSpeed/walkSpeed still match SIM", () => {
+  // combat.js cannot import world.js (the cycle would fail to resolve — see
+  // its header comment) so it hardcodes runSpeed=3.2/walkSpeed=1.4 as
+  // fallback defaults and documents them as mirroring SIM.runSpeed/
+  // SIM.walkSpeed. Nothing enforces that the two stay in sync — a future
+  // change to either SIM constant with nobody remembering to update the
+  // other default would silently ship a melee sprint speed that no longer
+  // matches world.js's own SWAT run speed, with every other test in this
+  // file passing (they all supply explicit `speeds`, which never exercises
+  // combat.js's own fallback). This test is the one place that calls
+  // `scene()` with no `speeds` override, so it is the one place that would
+  // catch that drift.
+  const { agents, combat } = scene([
+    { role: 'hostile', x: 2, z: 2, weapon: 'melee' },
+    { role: 'swat', x: 2 + (COMBAT.chargeRange - 0.5), z: 2, weapon: 'none', hp: COMBAT.swatHp },
+  ]);
+  for (let t = 0; t < COMBAT.scanInterval; t++) combat.step(t);
+  assert.equal(agents[0].chasing, true, 'setup failed to enter the chasing state');
+  assert.equal(agents[0].wants, SIM.runSpeed,
+    "combat.js's default runSpeed no longer matches SIM.runSpeed");
+
+  agents[1].x = 2 + (COMBAT.chargeRange + 2);
+  combat.step(COMBAT.scanInterval + 1);
+  assert.equal(agents[0].chasing, false, 'setup failed to drop out of the chasing state');
+  assert.equal(agents[0].wants, SIM.walkSpeed,
+    "combat.js's default walkSpeed no longer matches SIM.walkSpeed");
 });
