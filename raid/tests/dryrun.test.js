@@ -27,7 +27,8 @@ import { createOrders } from '../sim/orders.js';
 // never actually gotten there.
 test('a full headless mission completes cleanly at every room count', () => {
   const SEEDS_PER_ROOM_COUNT = 4;
-  const MAX_TICKS = 60 * 120; // missions run ~77-87 simulated seconds; generous ceiling, not a target
+  const MAX_TICKS = 60 * 120; // missions run ~25-54 simulated seconds now that combat can end one early; generous ceiling, not a target
+  const outcomes = new Set();
 
   for (let rooms = 8; rooms <= 12; rooms++) {
     for (let i = 0; i < SEEDS_PER_ROOM_COUNT; i++) {
@@ -44,7 +45,7 @@ test('a full headless mission completes cleanly at every room count', () => {
       const openedDoors = new Set();
 
       let ticks = 0;
-      while (orders.phase !== 'done' && ticks < MAX_TICKS) {
+      while (orders.outcome === null && ticks < MAX_TICKS) {
         world.tick();
         orders.update(world);
         ticks++;
@@ -75,14 +76,20 @@ test('a full headless mission completes cleanly at every room count', () => {
         }
       }
 
-      assert.equal(orders.phase, 'done', `${seed}: did not finish within ${MAX_TICKS / 60} simulated seconds`);
+      outcomes.add(orders.outcome);
 
-      // 'done' means "the phase machine reached its last state", which the
-      // advance-leg watchdog can in principle reach without the squad ever
-      // actually standing in the hostage's room (see orders.js). This is the
-      // assertion that makes 'done' mean the rescue actually happened.
-      assert.ok(orders.hostageReached,
-        `${seed}: mission reported done, but the squad never genuinely reached the hostage room (the advance watchdog skipped the final leg)`);
+      // Either side may win — that is the point of a genuine contest. What is
+      // never acceptable is a mission that neither finishes nor fails: that is
+      // a hang, and it is the thing this test exists to catch.
+      assert.ok(orders.outcome === 'success' || orders.outcome === 'failed',
+        `${seed}: mission never resolved within ${MAX_TICKS / 60} simulated seconds`);
+
+      if (orders.outcome === 'success') {
+        assert.ok(orders.hostageReached,
+          `${seed}: reported success without the squad ever reaching the hostage room`);
+        assert.ok(world.agents.find((a) => a.role === 'hostage').alive,
+          `${seed}: reported success with a dead hostage`);
+      }
 
       // A run that "completes" without anyone actually moving would still
       // reach 'done' if a goal resolved off-grid and every phase fell through
@@ -96,10 +103,44 @@ test('a full headless mission completes cleanly at every room count', () => {
       // Total distance alone is satisfied by the patrolling hostiles pacing
       // their rooms for the whole run — a frozen SWAT squad would still pass
       // it. Require the squad specifically to have covered real ground.
+      //
+      // Deliberately NOT filtered on `.alive`: a squad wipe is now a designed
+      // outcome (not a rare accident), and filtering to survivors makes this
+      // loop iterate zero agents on any seed where every SWAT dies — silently
+      // asserting nothing on exactly the seeds where a frozen squad would be
+      // hardest to tell apart from a genuinely fought-and-lost one. Every
+      // SWAT agent's tracked distance already freezes at the tick it dies
+      // (a corpse cannot move), so it still reads as real ground covered
+      // before death, not zero.
+      //
+      // The `> 5` bar has much less headroom against a general seed
+      // population than that might suggest -- two independent sweeps across
+      // seeds outside this test's own fixed set found legitimate early
+      // casualties under it: one a dead SWAT at 4.02m, with roughly 0.35% of
+      // all dead-SWAT records landing under the bar; another a 5.31m minimum
+      // over 644 dead-SWAT records, 0.31m of margin. What actually keeps this
+      // assertion from being flaky is that this test runs a fixed set of 20
+      // seeds (measured minimum distance before death: 10.71m), not any
+      // margin baked into the `5` itself -- do not read `> 5` as safe against
+      // an arbitrary seed, only against this specific set.
       for (const a of world.agents.filter((x) => x.role === 'swat')) {
         assert.ok(distance.get(a.id) > 5,
           `${seed}: SWAT agent ${a.id} travelled only ${distance.get(a.id).toFixed(1)}m — a frozen squad would still pass the aggregate distance check`);
       }
+
+      // Aggregate distance is satisfied by a couple of busy patrollers while
+      // the rest stand frozen. Every hostile that survived the mission should
+      // have covered ground of its own.
+      for (const a of world.agents.filter((x) => x.role === 'hostile' && x.alive)) {
+        assert.ok(distance.get(a.id) > 1,
+          `${seed}: surviving hostile ${a.id} never moved (${distance.get(a.id).toFixed(1)}m)`);
+      }
     }
   }
+
+  // A combat model where SWAT always win is as broken as one where they always
+  // lose, and a suite that only ever observes one outcome is not testing
+  // combat at all. This is deliberately about the SET of seeds, not any one
+  // of them -- no individual seed is required to go either way.
+  assert.ok(outcomes.has('success'), 'no seed produced a successful mission');
 });

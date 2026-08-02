@@ -9,6 +9,7 @@
 // sim has no notion of wall-clock time at all.
 
 import { facingToRotationY } from './facing.js';
+import { SIM } from './sim/world.js';
 
 const BLEND = 0.15;      // seconds to cross-fade between clips
 const WALK_MIN = 0.15;   // below this an agent reads as standing still
@@ -19,20 +20,72 @@ const RUN_MIN = 2.2;
 // anything wider than both is "sideways" (see directionalClip below).
 const FACING_CONE = Math.PI / 4;
 
-const CLIP_NAMES = ['Idle', 'Walk', 'Run', 'Run_Back', 'Run_Left', 'Run_Right'];
+// `Run_Shoot` (0.833s, per the pack) is deliberately not listed: it is not
+// this pack's clip for "firing while moving" — `Gun_Shoot` is (see
+// `combatClip` below) — and nothing here ever selects `Run_Shoot` itself.
+// Every name that IS listed here must be reachable, or it belongs on this
+// line, not in the rig: an unreachable entry costs every one of the twelve
+// figures its own dead weight/playing bookkeeping for a clip nothing will
+// ever request.
+const CLIP_NAMES = [
+  'Idle', 'Walk', 'Run', 'Run_Back', 'Run_Left', 'Run_Right',
+  'Idle_Gun_Pointing', 'Idle_Gun_Shoot', 'Gun_Shoot',
+  'Sword_Slash', 'HitRecieve', 'Death',
+];
 
-function ownedGroups(skeleton, scene) {
-  const nodes = new Set(skeleton.bones.map((b) => b.getTransformNode?.()).filter(Boolean));
-  return scene.animationGroups.filter((g) => g.targetedAnimations.some((ta) => nodes.has(ta.target)));
+/**
+ * How long a one-shot combat clip keeps being requested after the sim event
+ * that triggered it, in SIM TICKS — derived from the clip's own recorded
+ * length rather than a single guessed constant, because one constant read
+ * across clips of very different lengths can only be right for one of them:
+ * an earlier version of this file used a flat 18/24-tick window for every
+ * firing/flinch clip and every one of them but `HitRecieve` (close by
+ * coincidence) visibly cut short and blended back to idle mid-motion.
+ * Measured directly against the pinned Babylon 9.18.1 + this asset pack,
+ * identical across all three GLBs actually used (Swat.glb, Punk.glb,
+ * Casual.glb — confirmed by reading `group.from`/`.to` off each of a SWAT,
+ * a hostile, and the hostage figure's own rig, not assumed from one):
+ *
+ *   Gun_Shoot       0.600s
+ *   Idle_Gun_Shoot  0.667s
+ *   Sword_Slash     1.033s
+ *   HitRecieve      0.567s
+ *   Death           1.067s (held, not windowed — Death never expires, see startClip below)
+ *
+ * `AnimationGroup.from`/`.to` are frame numbers, not seconds, and every clip
+ * in this pack runs at 60fps (`targetedAnimations[0].animation
+ * .framePerSecond`, read directly rather than assumed) — `(to - from) / fps`
+ * recovers real seconds straight from the asset, then converts to ticks
+ * against `SIM.step`. Computed once per rig in makeRig() below rather than
+ * per frame: it depends only on the clip, not on anything that changes
+ * tick to tick. This is deliberately read from the actual loaded
+ * `AnimationGroup`, not hand-copied from the measurements above, so a
+ * future asset swap with different clip lengths (or even a different fps)
+ * stays correct automatically instead of silently reintroducing the
+ * cut-short bug this replaces. (Babylon 9.18.1 exposes everything this
+ * needs directly on the group, so no fallback to a hand-maintained
+ * per-clip constant table was needed — the measurements above are recorded
+ * for documentation, not because the code depends on them.)
+ */
+function clipDurationTicks(group) {
+  const fps = group?.targetedAnimations[0]?.animation?.framePerSecond;
+  if (!group || !fps) return 0; // missing/malformed clip: request it for 0 ticks rather than loop forever or crash
+  return Math.round(((group.to - group.from) / fps) / SIM.step);
 }
 
 /** A fresh per-clip weight/playing/started bookkeeping block for one rig
- * (one shared skeleton), same shape whether it is set up up front (SWAT,
- * hostiles) or later, the moment the hostage is rescued (see sync() below). */
-function makeRig(skeleton, scene) {
-  const groups = ownedGroups(skeleton, scene);
+ * (one figure's own skeleton and groups), same shape whether it is set up up
+ * front (SWAT, hostiles) or later, the moment the hostage is rescued (see
+ * sync() below). */
+function makeRig(figure) {
+  const groups = Object.fromEntries(CLIP_NAMES.map((n) => [n, figure.groups.find((g) => g.name === n)]));
   return {
-    groups: Object.fromEntries(CLIP_NAMES.map((n) => [n, groups.find((g) => g.name === n)])),
+    groups,
+    // Per-clip one-shot request window, in sim ticks — see
+    // clipDurationTicks above. Computed once here, from this rig's own
+    // groups, not shared across figures: every figure in this pack happens
+    // to measure identically, but nothing here assumes that has to stay true.
+    durationTicks: Object.fromEntries(CLIP_NAMES.map((n) => [n, clipDurationTicks(groups[n])])),
     // Per-clip weight, independent of any single "from -> to" pair. A clip
     // request just becomes the one name with target weight 1 (everything
     // else targets 0); a change of mind mid-fade is handled for free by
@@ -41,6 +94,12 @@ function makeRig(skeleton, scene) {
     weight: Object.fromEntries(CLIP_NAMES.map((n) => [n, 0])),
     playing: new Set(),
     started: false,
+    // Which firing/striking clip is currently in flight, and the `firedAt`
+    // tick it was chosen for — see combatClip's latch handling below. Both
+    // start at their "nothing has happened yet" values; `agent.firedAt`
+    // itself starts at -1 for an agent that has never fired, so the latch
+    // only ever activates on a genuine attack (see the `>= 0` guard below).
+    fireLatch: { clip: null, firedAt: -1 },
   };
 }
 
@@ -80,10 +139,83 @@ function directionalClip(agent) {
   return rel > 0 ? 'Run_Left' : 'Run_Right';
 }
 
+/**
+ * Which clip an agent calls for, combat first. Order matters and is a
+ * priority, not a sequence: a dying agent is not also flinching, and an agent
+ * that is firing should be seen firing even though it is technically also
+ * standing still.
+ *
+ * `world.ticks` is passed in because the sim records combat events as tick
+ * stamps rather than as durations — it has no notion of how long anything
+ * should be shown for, which is exactly right for a module that must run
+ * headless at 340k ticks/s. `durations` is this agent's own rig's
+ * `durationTicks` (see clipDurationTicks above) — a clip stays requested for
+ * exactly its own real length, not a borrowed constant. `latch` is this
+ * agent's own rig's `fireLatch` (see makeRig above), mutated in place here —
+ * see the block below for why this function needs to remember something
+ * across calls at all, not just read the agent's current fields.
+ *
+ * Firing/striking clips are LATCHED, not gated on live agent state. The
+ * first version of this fix (round 1) gated every firing clip on
+ * `agent.target >= 0`, reasoning that combat.js clears `target` to -1 almost
+ * immediately once it is no longer valid. That reasoning was correct but
+ * misapplied: `combat.js` clears the ATTACKER's own `target` to -1 on the
+ * very next tick after ITS OWN SHOT kills its target (see `kill()` in
+ * sim/combat.js, called from `attack()`) — which means the single most
+ * common way for `target` to go stale is the attacker landing a killing
+ * blow, i.e. exactly the moment the animation matters most. Gating on
+ * `target >= 0` cut every killing blow's clip off after ~1 tick and
+ * cross-faded back to idle — reintroducing, for kills specifically, the
+ * "cut off mid-motion" symptom the duration-derivation fix above exists to
+ * remove.
+ *
+ * The fix is to decide which clip to show only ONCE per attack, the moment
+ * `agent.firedAt` changes to a value this rig has not latched before, and
+ * then hold that decision for the clip's own full duration regardless of
+ * what `target` or `speed` do in the meantime. `combat.js` only ever
+ * advances `firedAt` inside `attack()`, so a changed `firedAt` alone already
+ * means "an attack just happened" — no additional `target` check is needed
+ * to know a NEW window may begin. Latching also fixes a second flicker: an
+ * agent that starts firing stationary and then, mid-window, has its target
+ * retreat out of `gunRange` while staying within `sightRange` (un-halting
+ * it — see the `!a.chasing && distance <= rangeOf(a)` branch in
+ * sim/world.js) would otherwise re-evaluate speed every frame and swap
+ * `Idle_Gun_Shoot` for `Gun_Shoot` mid-swing.
+ */
+function combatClip(agent, ticks, durations, latch) {
+  if (!agent.alive) return 'Death';
+  if (agent.hitAt >= 0 && ticks - agent.hitAt < durations.HitRecieve) return 'HitRecieve';
+
+  if (agent.firedAt >= 0 && agent.firedAt !== latch.firedAt) {
+    // A new attack (hit or miss — `attack()` sets `firedAt` regardless)
+    // fired since this rig last looked. Decide the clip once, from
+    // whatever `target`/`weapon`/`speed` were at the moment it was noticed,
+    // and remember it: sim/world.js halts a gun agent's velocity to exactly
+    // 0 the instant it is in range with a valid target (chasing is
+    // melee-only, so this never applies to a melee agent), so stationary is
+    // the ordinary firing case for a gun and moving is the rare one — the
+    // mapping below puts the pack's dedicated standing-fire clip on the
+    // common case, matching the design spec's own table.
+    latch.firedAt = agent.firedAt;
+    latch.clip = agent.weapon === 'melee'
+      ? 'Sword_Slash'
+      : agent.speed < WALK_MIN ? 'Idle_Gun_Shoot' : 'Gun_Shoot';
+  }
+  if (latch.clip && ticks - latch.firedAt < durations[latch.clip]) return latch.clip;
+
+  // Holding a target but between shots: weapon up, not slack at the side.
+  if (agent.target >= 0 && agent.weapon === 'gun' && agent.speed < WALK_MIN) {
+    return 'Idle_Gun_Pointing';
+  }
+  return directionalClip(agent);
+}
+
 export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
-  // One clip set per SKELETON, not per figure: the pack shares a skeleton
-  // between every figure built from the same model (four SWAT, seven
-  // hostiles), so starting a clip for one starts it for all of them. The
+  // One rig per FIGURE now, not per skeleton. Every figure owns its skeleton
+  // and its animation groups (see cast.js), so the old "four SWAT share one
+  // pose, drive it from the fastest of them" constraint is gone — which is
+  // what makes it possible for one agent to fire while another sprints, and
+  // for one hostile to die without taking the other six down with it. The
   // hostage is excluded from clip playback ONLY — its floor pose is held by
   // written-back TransformNode values (see seated.js), and starting any clip
   // would overwrite those bone-local values and destroy the pose. Moving the
@@ -91,13 +223,12 @@ export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
   // its position and facing are synced like every other agent below — the
   // hostage must be seen leaving with the squad for the rescue to read as
   // having happened. Its own rig is added later, the moment orders reports
-  // the rescue — see the `hostageRig` handling in sync() below.
-  const rigs = new Map();
-  for (const fig of cast.figures) {
-    if (fig.role === 'hostage') continue;
-    if (rigs.has(fig.skeleton)) continue;
-    rigs.set(fig.skeleton, makeRig(fig.skeleton, scene));
-  }
+  // the rescue — see the `hostageRescued` handling in sync() below.
+  const rigs = new Map(); // agent index -> rig
+  cast.figures.forEach((fig, i) => {
+    if (fig.role === 'hostage') return; // floor pose; its rig is added on rescue
+    rigs.set(i, makeRig(fig));
+  });
   const hostageFigure = cast.figures.find((fig) => fig.role === 'hostage');
   let hostageRescued = false;
 
@@ -129,6 +260,29 @@ export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
   // coherent pose, just briefly a three-way rather than two-way mix. A group
   // is only stopped once its RAW weight reaches exactly 0 (never based on
   // its post-normalisation value), so it never snaps to bind pose mid-fade.
+  // Death is the one clip that must not loop — a corpse repeatedly collapsing
+  // is the kind of thing that reads as a bug from across the room. Playing it
+  // non-looping leaves Babylon holding the final frame, which is exactly the
+  // pose wanted.
+  //
+  // That is safe with crossfade's bookkeeping below, but only by a margin
+  // worth keeping in mind on a future asset swap. Once Babylon self-completes
+  // a non-looping group, `rig.playing` is left stale (still says the clip is
+  // playing — nothing here calls `stop()` on it), so crossfade keeps calling
+  // `setWeightForAllAnimatables` on a group with zero animatables left every
+  // frame after that; that is a harmless no-op, and `if (w === target)
+  // continue` above stops it from ever trying to re-`start()` the same clip.
+  // The margin is that this only holds because Death (1.067s) is far longer
+  // than BLEND (0.15s): the raw weight ramp always finishes climbing to 1
+  // well before the clip itself self-completes, so `rig.playing` never goes
+  // stale WHILE the raw weight is still mid-fade — if it did, the
+  // renormalisation sum below would be dividing by a stale `playing` set
+  // that no longer matches which groups are actually still ramping, a
+  // phantom-weight race. A future Death clip shorter than roughly BLEND
+  // would reopen exactly that race and would need either a longer BLEND or
+  // an explicit "did Babylon finish this on its own" check here.
+  const startClip = (g, name) => g.start(name !== 'Death', 1.0, g.from, g.to, false);
+
   const crossfade = (rig, name, dt) => {
     if (!rig.started) {
       // Nothing has ever played on this rig: snap straight to the first
@@ -139,7 +293,7 @@ export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
         if (!g) continue;
         rig.weight[n] = n === name ? 1 : 0;
         if (n === name) {
-          g.start(true, 1.0, g.from, g.to, false);
+          startClip(g, n);
           g.setWeightForAllAnimatables(1);
           rig.playing.add(n);
         }
@@ -154,7 +308,7 @@ export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
       let w = rig.weight[n];
       if (w === target) continue;
       if (target === 1 && !rig.playing.has(n)) {
-        g.start(true, 1.0, g.from, g.to, false);
+        startClip(g, n);
         rig.playing.add(n);
       }
       w = target === 1 ? Math.min(1, w + step) : Math.max(0, w - step);
@@ -235,22 +389,15 @@ export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
       if (!hostageRescued && hostageFigure && orders?.hostageReached) {
         hostageRescued = true;
         hostageFigure.standUp();
-        rigs.set(hostageFigure.skeleton, makeRig(hostageFigure.skeleton, scene));
+        rigs.set(cast.figures.indexOf(hostageFigure), makeRig(hostageFigure));
       }
 
-      // Clip choice per rig, from the fastest agent on that rig — with a shared
-      // skeleton there is only one pose to give them, so a walking group should
-      // look like it is walking. Direction (see directionalClip) is read off
-      // that same fastest agent, not averaged across the rig's agents: the
-      // shared skeleton can only show one pose at a time regardless, exactly
-      // as speed already worked before directional clips existed.
-      for (const [skeleton, rig] of rigs) {
-        let fastest = null;
-        for (let i = 0; i < world.agents.length; i++) {
-          const a = world.agents[i];
-          if (cast.figures[i]?.skeleton === skeleton && (!fastest || a.speed > fastest.speed)) fastest = a;
-        }
-        crossfade(rig, fastest ? directionalClip(fastest) : 'Idle', dt);
+      // Clip choice per figure now that every figure owns its own skeleton
+      // and groups — no more picking a single "fastest agent" to represent a
+      // whole shared rig.
+      for (const [i, rig] of rigs) {
+        const a = world.agents[i];
+        crossfade(rig, a ? combatClip(a, world.ticks, rig.durationTicks, rig.fireLatch) : 'Idle', dt);
       }
     },
 

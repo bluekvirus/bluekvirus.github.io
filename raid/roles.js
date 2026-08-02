@@ -129,12 +129,12 @@ export function assignRoles(plan) {
   const swatPoints = scatter(entry, CAST.swat, rng, taken);
   taken.push(...swatPoints);
   const inwardFrom = (p) => Math.atan2(-p.x, -p.z); // face the footprint centre
-  const swat = swatPoints.map((p) => ({ ...p, facing: inwardFrom(p), cellId: entry.id }));
+  const swat = swatPoints.map((p) => ({ ...p, facing: inwardFrom(p), cellId: entry.id, weapon: 'gun' }));
 
   // The hostage sits in the middle of the objective room.
   const hostagePoint = { x: hostageRoom.x + hostageRoom.w / 2, z: hostageRoom.z + hostageRoom.d / 2 };
   taken.push(hostagePoint);
-  const hostage = { ...hostagePoint, facing: rng.range(0, Math.PI * 2), cellId: hostageRoom.id };
+  const hostage = { ...hostagePoint, facing: rng.range(0, Math.PI * 2), cellId: hostageRoom.id, weapon: 'none' };
 
   // Hostiles: two guarding the hostage, the rest spread over the deeper rooms so
   // the squad meets resistance on the way in rather than all at the objective.
@@ -153,11 +153,18 @@ export function assignRoles(plan) {
     cursor++;
   }
 
+  // Loadouts. The first two assignments are the hostage room's guards and
+  // always carry guns — a melee guard would charge the squad on sight and
+  // abandon the objective it exists to defend. The rest alternate, which
+  // guarantees both kinds appear on every seed (a shootout with no chargers,
+  // or chargers with nothing pinning the squad, are both duller and leave
+  // half this feature untested) without spending rng draws on it.
   const hostiles = [];
-  for (const cell of assignments) {
+  for (const [i, cell] of assignments.entries()) {
     const [p] = scatter(cell, 1, rng, taken);
     taken.push(p);
-    hostiles.push({ ...p, facing: rng.range(0, Math.PI * 2), cellId: cell.id });
+    const weapon = i < 2 ? 'gun' : (i % 2 === 0 ? 'gun' : 'melee');
+    hostiles.push({ ...p, facing: rng.range(0, Math.PI * 2), cellId: cell.id, weapon });
     if (roles[cell.id] === 'filler') roles[cell.id] = 'guard';
   }
 

@@ -95,6 +95,12 @@ export function findPath(grid, from, to, isDoorOpen) {
   const start = grid.worldToCell(from.x, from.z);
   const goal = grid.worldToCell(to.x, to.z);
   if (!grid.inBounds(start.col, start.row) || !grid.inBounds(goal.col, goal.row)) return null;
+  // The START cell must be passable too, not merely in bounds. A start inside
+  // geometry used to emit a first waypoint inside a wall; spawns are
+  // generator-controlled, so this was unreachable while only the generator
+  // placed agents, but anything that can displace an agent mid-mission makes
+  // it reachable.
+  if (!passable(grid, start.col, start.row, isDoorOpen)) return null;
   if (!passable(grid, goal.col, goal.row, isDoorOpen)) return null;
 
   const size = grid.cols * grid.rows;

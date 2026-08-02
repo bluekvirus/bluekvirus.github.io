@@ -102,3 +102,46 @@ test('no two spawns land on top of each other', () => {
     }
   }
 });
+
+test('hostile weapon distribution is deterministic and includes both kinds', () => {
+  // The weapon assignment is seed-invariant by construction: CAST.hostiles is a
+  // frozen module constant (7), and the formula (i < 2 ? 'gun' : (i % 2 === 0 ?
+  // 'gun' : 'melee')) depends only on the loop index. Result: guns at indices
+  // 0, 1, 2, 4, 6 and melee at 3, 5. This test asserts that invariant explicitly
+  // so that changing CAST.hostiles fails loudly rather than silently reshuffling
+  // the mix.
+  const mission = assignRoles(generateFloorplan('distribution-test'));
+  const weapons = mission.spawns.hostiles.map((h) => h.weapon);
+
+  assert.deepEqual(weapons, ['gun', 'gun', 'gun', 'melee', 'gun', 'melee', 'gun'],
+    'hostile weapon distribution must be: guns at indices 0,1,2,4,6 and melee at 3,5');
+});
+
+test('every figure is issued a valid weapon field', () => {
+  for (const seed of SEEDS) {
+    const mission = assignRoles(generateFloorplan(seed));
+
+    for (const s of mission.spawns.swat) {
+      assert.equal(s.weapon, 'gun', `${seed}: a SWAT member is not carrying a gun`);
+    }
+    assert.equal(mission.spawns.hostage.weapon, 'none');
+
+    const kinds = mission.spawns.hostiles.map((h) => h.weapon);
+    assert.ok(kinds.every((k) => k === 'gun' || k === 'melee'),
+      `${seed}: a hostile has an unknown weapon: ${JSON.stringify(kinds)}`);
+  }
+});
+
+test('the two hostage guards are always armed with guns', () => {
+  // A melee guard standing over the hostage would charge the squad the moment
+  // it entered the room, abandoning the objective it exists to defend. The
+  // guards are the two hostiles sharing the hostage's room.
+  for (const seed of SEEDS) {
+    const mission = assignRoles(generateFloorplan(seed));
+    const guards = mission.spawns.hostiles.filter((h) => h.cellId === mission.hostageRoomId);
+    assert.equal(guards.length, 2, `${seed}: expected exactly 2 hostage guards`);
+    for (const g of guards) {
+      assert.equal(g.weapon, 'gun', `${seed}: a hostage guard is carrying a melee weapon`);
+    }
+  }
+});

@@ -30,6 +30,9 @@
   #legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
   #meta { margin-top: 8px; font: 500 11px/1.5 inherit; letter-spacing: .1em;
     text-transform: uppercase; color: #6d7581; }
+  .outcome { margin-left: 1rem; letter-spacing: 0.08em; }
+  .outcome[data-state="success"] { color: #6fcf7f; }
+  .outcome[data-state="failed"]  { color: #e06c6c; }
 </style>
 </head>
 <body>
@@ -53,7 +56,7 @@
     <span><i style="background:#d59b3c"></i>Hostage</span>
     <span><i style="background:#5c9455"></i>Extraction</span>
   </div>
-  <div id="meta">drag to orbit, scroll to zoom · <span id="stats">generating…</span></div>
+  <div id="meta">drag to orbit, scroll to zoom · <span id="stats">generating…</span><span id="outcome" class="outcome"></span></div>
 </div>
 
 <script

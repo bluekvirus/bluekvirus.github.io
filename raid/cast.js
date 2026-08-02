@@ -1,24 +1,24 @@
 // Loading and placing the twelve figures.
 //
-// The whole Quaternius pack shares one skeleton — 62 bones, identical names in
-// identical order — so a model imported once can be cloned onto fresh skeletons
-// for every other figure of that type. Importing twelve GLBs separately would
-// download the same few megabytes over and over.
-//
-// NOTE: "fresh skeletons" above is aspirational, not what Babylon actually
-// does. TransformNode.clone() does not clone the Skeleton of a skinned child
-// mesh — every clone of a template keeps pointing at that template's single
-// shared Skeleton instance. Verified empirically: cloning a loaded root twice
-// leaves scene.skeletons.length unchanged, and both clones' skinned meshes
-// resolve to the exact same skeleton object as the original import (and as
-// each other). So all 4 SWAT share one Skeleton, all 7 hostiles share
-// another, and the 1 hostage has its own — 3 Skeleton instances for 12
-// figures, not 12. Posing one figure's skeleton (a later task's job) will
-// move every sibling of that role unless that task clones the skeleton
-// per-figure first.
+// Each model (Swat.glb, Punk.glb, Casual.glb) is loaded once into an
+// AssetContainer and then instantiated per figure via
+// `container.instantiateModelsToScene()`. Unlike `TransformNode.clone()` —
+// which does NOT clone the Skeleton of a skinned child mesh, so every clone
+// of a template keeps pointing at that template's single shared Skeleton
+// instance — `instantiateModelsToScene()` genuinely gives each instance its
+// own Skeleton and its own AnimationGroups, retargeted onto that skeleton.
+// So all 4 SWAT, all 7 hostiles, and the 1 hostage each own a distinct
+// Skeleton: 12 Skeleton instances for 12 figures, not 3. `cloneMaterials:
+// false` (the second argument to `instantiateModelsToScene`) keeps materials
+// shared across instances of the same model — there is no reason for twelve
+// copies of the same material. `skeletonsAreDistinct` below is asserted at
+// the end of `populate` specifically so a future regression back toward
+// shared skeletons fails loudly at startup rather than surfacing as "all the
+// hostiles died at once".
 
 import { layHostageOnFloor } from './seated.js';
 import { facingToRotationY } from './facing.js';
+import { attachWeapon } from './weapons.js';
 
 const ASSET_DIR = '../assets/quaternius/';
 
@@ -28,25 +28,70 @@ const MODEL = {
   hostage: 'Casual.glb',
 };
 
-/** Import one model and keep it as a hidden template to clone from. */
-async function loadTemplate(scene, file) {
-  const loaded = await BABYLON.SceneLoader.ImportMeshAsync('', ASSET_DIR, file, scene);
+// Every clip agents.js's CLIP_NAMES (raid/agents.js) or seated.js's Death
+// lookup (raid/seated.js) will ever ask a figure's `groups` for by name.
+// Kept here, not imported from agents.js, so cast.js can assert coverage
+// without reaching into a renderer-binding module for a list — if either
+// module starts looking a new clip up by name, add it here too.
+const REQUIRED_CLIPS = ['Idle', 'Walk', 'Run', 'Run_Back', 'Run_Left', 'Run_Right', 'Death'];
 
-  // Stop the clips the loader auto-starts, and keep only Idle. Twelve figures
-  // each carrying 25 animation groups is 300 groups the scene does not need.
-  for (const g of loaded.animationGroups) g.stop();
-
-  const root = loaded.meshes.find((m) => m.name === '__root__') ?? loaded.meshes[0];
-  root.setEnabled(false);
-  return { loaded, root };
+/**
+ * Every figure must own its own skeleton. Four SWAT sharing one skeleton is
+ * the pack's default (TransformNode.clone() does not clone a skinned mesh's
+ * Skeleton) and it makes per-figure animation impossible: one hostile dying
+ * would put all seven into the Death pose. Exported so the browser can assert
+ * it rather than leaving it to be noticed on screen.
+ */
+export function skeletonsAreDistinct(figures) {
+  const seen = new Set();
+  for (const f of figures) {
+    if (!f.skeleton || seen.has(f.skeleton)) return false;
+    seen.add(f.skeleton);
+  }
+  return true;
 }
 
-function place(template, spawn, name) {
-  const clone = template.root.clone(name, null);
-  clone.setEnabled(true);
-  clone.position.set(spawn.x, 0, spawn.z);
+/** Load one model into a container we can instantiate from repeatedly. */
+async function loadContainer(scene, file) {
+  const container = await BABYLON.SceneLoader.LoadAssetContainerAsync(ASSET_DIR, file, scene);
+  // The loader auto-starts clips on the container's own groups; those groups
+  // are templates and must never play.
+  for (const g of container.animationGroups) g.stop();
+  return container;
+}
+
+/**
+ * Tear down one instantiateModelsToScene() result that `instantiate()` is
+ * about to reject partway through — the two throws below (an animation-group
+ * count mismatch, a missing required clip) both fire before `instantiate()`
+ * returns anything to its caller, so nothing about this figure has reached
+ * `populate()`'s `figures` array yet and its outer try/catch has no handle on
+ * it. If `instantiate()` didn't clean up after itself here, this figure's
+ * root, meshes, skeleton(s) and animation groups would sit in the scene
+ * forever after every failed build — the same leak class the outer
+ * try/catch exists to close for `attachWeapon()`, just one throw site
+ * earlier where that catch can't reach.
+ */
+function disposeEntries(entries, root) {
+  for (const g of entries.animationGroups) g.dispose();
+  for (const s of entries.skeletons) s.dispose();
+  root.dispose(false, true);
+}
+
+/**
+ * One independent copy: its own meshes, its own Skeleton, and its own
+ * AnimationGroups retargeted onto that skeleton. This is the whole point of
+ * instantiateModelsToScene over clone() — `cloneMaterials: false` keeps the
+ * materials shared (there is no reason for twelve copies of the same
+ * material), while skeletons and animation groups are genuinely per-instance.
+ */
+function instantiate(container, spawn, name) {
+  const entries = container.instantiateModelsToScene((n) => `${name}_${n}`, false);
+  const root = entries.rootNodes[0];
+  root.setEnabled(true);
+  root.position.set(spawn.x, 0, spawn.z);
   // Plain Euler assignment, not a rotationQuaternion — seated.js reads this
-  // clone's `.rotation.y` back out to derive the hostage's facing for its
+  // node's `.rotation.y` back out to derive the hostage's facing for its
   // pose. Switching this to a rotationQuaternion would leave `.rotation`
   // stale and silently break that pose with no error.
   //
@@ -54,49 +99,131 @@ function place(template, spawn, name) {
   // rotation.y this model actually needs — see facing.js for why a straight
   // `spawn.facing` assignment here would spawn every figure facing exactly
   // backward.
-  clone.rotation = new BABYLON.Vector3(0, facingToRotationY(spawn.facing ?? 0), 0);
+  root.rotation = new BABYLON.Vector3(0, facingToRotationY(spawn.facing ?? 0), 0);
 
-  // Read the skeleton off the clone's own meshes rather than assuming it
-  // matches the template's — see the note above on why that assumption
-  // happens to hold today, but this stays correct even if a future model's
-  // import shape (or Babylon's clone behaviour) changes.
-  const skinned = clone.getChildMeshes().find((m) => m.skeleton);
-  return { clone, skeleton: skinned?.skeleton ?? null };
+  // instantiateModelsToScene runs every cloned entry's original name through
+  // the naming callback above, and that is not limited to meshes/nodes — it
+  // renames each AnimationGroup too (verified empirically: the container's
+  // "Death" group comes back "swat_0_Death" on the instance). That gives
+  // every figure a per-instance-unique group name, but leaves nothing
+  // literally named "Death"/"Walk"/etc for agents.js's CLIP_NAMES lookup or
+  // seated.js's `.find(g => g.name === 'Death')` to find. Restore the
+  // canonical clip name on each instance's group, matching by array
+  // position against the container's own (never-renamed) groups — verified
+  // empirically that instantiateModelsToScene preserves array order between
+  // `container.animationGroups` and `entries.animationGroups` one-for-one.
+  //
+  // That array-order correspondence is not a documented API guarantee, only
+  // an empirical observation about this Babylon version, so it is checked
+  // here rather than assumed silently. A length mismatch would make the
+  // per-index rename below outright wrong (naming the wrong group after the
+  // wrong clip); a missing required clip after renaming means a lookup by
+  // name downstream (agents.js's CLIP_NAMES, seated.js's Death) would go
+  // quietly undefined instead of erroring — `crossfade()` in agents.js
+  // already guards `if (!g) continue`, so that failure would be silent, not
+  // thrown, which is exactly the kind of regression `skeletonsAreDistinct`
+  // exists to keep loud. Fail loudly here instead.
+  if (entries.animationGroups.length !== container.animationGroups.length) {
+    disposeEntries(entries, root);
+    throw new Error(
+      `cast: "${name}" instantiated ${entries.animationGroups.length} animation groups, ` +
+      `template has ${container.animationGroups.length} — array-order rename is unsafe`
+    );
+  }
+  entries.animationGroups.forEach((g, i) => {
+    g.name = container.animationGroups[i].name;
+  });
+  const names = new Set(entries.animationGroups.map((g) => g.name));
+  const missing = REQUIRED_CLIPS.filter((n) => !names.has(n));
+  if (missing.length) {
+    disposeEntries(entries, root);
+    throw new Error(`cast: "${name}" is missing required animation group(s) after rename: ${missing.join(', ')}`);
+  }
+
+  const skinned = root.getChildMeshes().find((m) => m.skeleton);
+  return {
+    root,
+    skeleton: skinned?.skeleton ?? entries.skeletons[0] ?? null,
+    groups: entries.animationGroups,
+    entries,
+  };
 }
 
 export async function populate(scene, mission, shadows) {
-  const templates = {};
+  const containers = {};
   try {
     for (const [role, file] of Object.entries(MODEL)) {
-      templates[role] = await loadTemplate(scene, file);
+      containers[role] = await loadContainer(scene, file);
     }
   } catch (err) {
-    // A later import failing must not strand the earlier ones in the scene
-    // with no handle to reach them by — they are disabled, so they would be
-    // invisible as well as unreleasable.
-    for (const t of Object.values(templates)) {
-      for (const g of t.loaded.animationGroups) g.dispose();
-      for (const m of t.loaded.meshes) m.dispose(false, true);
-      for (const s of t.loaded.skeletons) s.dispose();
-    }
+    for (const c of Object.values(containers)) c.dispose();
     throw err;
   }
 
   const figures = [];
   const add = (role, spawn, i) => {
-    const { clone: root, skeleton } = place(templates[role], spawn, `${role}_${i}`);
-    for (const m of root.getChildMeshes()) {
+    const made = instantiate(containers[role], spawn, `${role}_${i}`);
+    for (const m of made.root.getChildMeshes()) {
       if (m.getTotalVertices() > 0) {
         m.receiveShadows = true;
         shadows?.addShadowCaster(m);
       }
     }
-    figures.push({ root, skeleton, role });
+    const spawnWeapon = spawn.weapon ?? 'none';
+    // Pushed BEFORE attachWeapon runs, not after: attachWeapon throws when a
+    // figure has no hand bone, and if that throw happens before this figure
+    // is in `figures`, the catch block below (and its "dispose everything
+    // built so far" sweep) never sees it — `made.root`'s meshes and
+    // `made.entries.skeletons` would leak even though every other figure got
+    // cleaned up. Pushing first, with `weaponMesh` still null, means a throw
+    // here still leaves this figure disposable like any other.
+    const figure = {
+      root: made.root, skeleton: made.skeleton, groups: made.groups,
+      role, entries: made.entries, weapon: spawnWeapon, weaponMesh: null,
+    };
+    figures.push(figure);
+    figure.weaponMesh = attachWeapon(scene, { ...made, role }, spawnWeapon);
+    if (figure.weaponMesh) shadows?.addShadowCaster(figure.weaponMesh);
   };
 
-  mission.spawns.swat.forEach((s, i) => add('swat', s, i));
-  mission.spawns.hostiles.forEach((s, i) => add('hostile', s, i));
-  add('hostage', mission.spawns.hostage, 0);
+  // `attachWeapon()` throws on a missing hand bone, and `skeletonsAreDistinct`
+  // throws after the loop — both leave every figure already pushed into
+  // `figures` (its meshes, skeleton, animation groups, and any weapon mesh)
+  // with nothing to dispose it, since `figures` never reaches the return
+  // statement and the caller (main.js's uncaught `repopulate()` call) only
+  // ever sees the rejection, not the leak. `add()` pushes each figure before
+  // calling `attachWeapon` specifically so a throw from `attachWeapon` on the
+  // figure currently being built is still covered by this sweep, not just
+  // figures from earlier iterations.
+  //
+  // `instantiate()` has its own two throw sites (a missing required clip, an
+  // animation-group count mismatch) but both fire before it returns anything
+  // to `add()`, before that figure could be pushed here — so this catch can
+  // never reach it. `instantiate()` disposes its own partial work (see
+  // `disposeEntries`) before rethrowing, so those two throw sites don't
+  // depend on this catch at all; this catch only ever has to sweep up
+  // figures from *earlier*, already-pushed iterations plus whichever figure
+  // was mid-`attachWeapon` when the whole loop unwound. Tear down everything
+  // built so far before rethrowing so a partial build doesn't leak into the
+  // scene.
+  try {
+    mission.spawns.swat.forEach((s, i) => add('swat', s, i));
+    mission.spawns.hostiles.forEach((s, i) => add('hostile', s, i));
+    add('hostage', mission.spawns.hostage, 0);
+
+    if (!skeletonsAreDistinct(figures)) {
+      throw new Error('cast: figures are sharing skeletons — per-figure animation is impossible');
+    }
+  } catch (err) {
+    for (const f of figures) {
+      f.weaponMesh?.dispose(false, true);
+      for (const g of f.groups) g.dispose();
+      for (const s of f.entries.skeletons) s.dispose();
+      f.root.dispose(false, true);
+    }
+    for (const c of Object.values(containers)) c.dispose();
+    throw err;
+  }
 
   // The hostage is laid on the floor rather than left standing.
   //
@@ -114,12 +241,22 @@ export async function populate(scene, mission, shadows) {
   return {
     figures,
     dispose() {
-      for (const f of figures) f.root.dispose(false, true);
-      for (const t of Object.values(templates)) {
-        for (const g of t.loaded.animationGroups) g.dispose();
-        for (const m of t.loaded.meshes) m.dispose(false, true);
-        for (const s of t.loaded.skeletons) s.dispose();
+      for (const f of figures) {
+        f.weaponMesh?.dispose(false, true);
+        for (const g of f.groups) g.dispose();
+        // instantiateModelsToScene's Skeleton is not a child of `root` in the
+        // scene graph and is not owned by the container — a mesh only
+        // REFERENCES a skeleton, it does not own it, which is the very
+        // reason the old shared-skeleton bug existed in the first place.
+        // `root.dispose()` below never touches it, and nothing else in this
+        // tree does either, so it must be disposed explicitly or it is
+        // orphaned into `scene.skeletons` forever. Iterate `f.entries.skeletons`
+        // (the authoritative set this instantiation created), not just
+        // `f.skeleton`, in case a future model shape yields more than one.
+        for (const s of f.entries.skeletons) s.dispose();
+        f.root.dispose(false, true);
       }
+      for (const c of Object.values(containers)) c.dispose();
     },
   };
 }
