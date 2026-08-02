@@ -19,7 +19,7 @@ This phase makes them decide.
 - Building search over a known blueprint with unknown occupants
 - Room clearing, stacking on doors, covering fire, falling back when hurt
 - A termination guarantee that survives the loss of `orders.js`'s watchdogs
-- Ammunition, magazines and a reload cycle, with a hand-authored reload clip
+- Ammunition and a reload cycle, with a hand-authored reload clip
 - Melee survivability: more health, evasion while charging, a charge speed
 - Hard body collision between living agents
 
@@ -132,12 +132,14 @@ within 2x of the limit, the limit is too tight.
 `nextRoom(graph, visited, from)` returns the nearest unvisited room by door-graph
 distance from the squad's current room, ties broken by room id for determinism.
 A room becomes **visited** the moment a squad member is inside it, and never
-reverts. `cleared` — visited with no living hostile in it — is tracked
-separately for the tactical layer, and is deliberately NOT what search keys
-on. Keying search on `cleared` would break termination: a hostile the squad
-cannot kill, or one that wanders in behind them, would leave a room
-permanently unvisited and send the sweep round forever. Visited-on-entry is
-monotonic, which is what makes the completeness argument hold.
+reverts. That monotonicity is the whole completeness argument, so search must
+key on nothing else. In particular it must not key on "cleared of hostiles":
+a hostile the squad cannot kill, or one that wanders in behind them, would
+leave a room permanently unvisited and send the sweep round forever.
+
+Whether a room currently holds a living hostile is a question the tactical
+layer asks on demand, computed from agent positions. It is not stored state
+and there is no `cleared` flag to keep in sync.
 
 The hostage is found by sight, not by lookup — the squad has no idea where it
 is until a member sees it. Search ends the moment it does.
@@ -158,20 +160,24 @@ These are unit assignments derived from squad state, not scripted sequences.
 
 ### Ammo and reload
 
-```
-ammo        rounds in the current magazine
-magazines   spare magazines remaining
-```
+One field: `ammo`, rounds in the current magazine. Firing decrements it; at
+zero the agent reloads for `reloadTime` seconds, during which it cannot fire.
+Spare magazines are unlimited.
 
-Firing decrements `ammo`. At zero with spares, the agent enters a reload of
-`reloadTime` seconds during which it cannot fire but can still move. At zero
-with no spares, a gun agent falls back to melee.
+Starting values: `magazineSize` 10, `reloadTime` 1.8s.
 
-Starting values: `magazineSize` 10, `magazines` 3, `reloadTime` 1.8s. These
-are a starting point to be measured. **Acceptance criterion: reload must
-actually occur in a substantial fraction of missions.** If measurement shows
-it firing rarely or never, the mechanic is inert and either the sizing changes
-or the feature is reported as not delivered — it must not ship as decoration.
+**A finite spare-magazine count is deliberately not modelled, and neither is
+running dry.** SWAT fire ~6 shots each per mission today and ~12 once clearing
+doubles contacts; any plausible spare count — three magazines is thirty rounds
+— can never be exhausted, so the count and the out-of-ammo melee fallback it
+would gate are provably dead code before a line is written. Phase C shipped
+three such constants and a reviewer had to find and revert them. One field is
+enough to make reload real.
+
+**Acceptance criterion: reload must actually occur in a substantial fraction
+of missions.** If measurement shows it firing rarely, the magazine size
+changes or the feature is reported as not delivered. It must not ship as
+decoration.
 
 ### Evasion and melee survivability
 
@@ -250,10 +256,9 @@ Pure, under `node --test`:
 - No two living agents ever overlap once collision lands
 - `bodyRadius * 2 < meleeRange`, asserted as a constant relationship
 - Reload occurs in a substantial fraction of missions
-- A gun agent with no ammo and no magazines falls back to melee
+- A reloading agent cannot fire until the reload completes
 - Determinism: same seed and tick count, identical `world.hash()` — which must
-  grow to cover `ammo` and `magazines`, or a diverging fight replays as
-  identical
+  grow to cover `ammo`, or a diverging fight replays as identical
 
 Measured and reported, not gated: map coverage, hostile encounter rate, melee
 engagement rate, mission outcome split, reload frequency, and worst-case
@@ -266,17 +271,15 @@ change an outcome should be removed rather than kept.
 
 ## Risks
 
-- **Termination is the whole game.** If the replacement guarantee is weaker
-  than what `orders.js` provided, this phase reintroduces hangs that took four
-  fix rounds to eliminate in phase C. It lands first and gets its own tests.
-- **`world.hash()` must grow.** Any new simulation state absent from the hash
-  makes the determinism test pass while the simulation diverges — this exact
-  gap was caught in phase C for `hp`/`alive`.
-- **Body radius may deadlock.** The recovery machinery exists and is tested,
-  but has never fired in a real mission. Expect this task to surface stalls.
-- **Scope.** This spec covers four subsystems at the owner's explicit
-  direction, against a recommendation to split them. It is roughly four times
-  the surface of phase C, which took ten tasks and twenty-six commits. The
-  build order above is what makes it sequenceable; if the plan grows beyond
-  what one document can hold, split it at a numbered boundary rather than
-  mid-subsystem.
+- **Body radius may deadlock.** The yield, nudge and right-of-way machinery is
+  correct and tested but has never fired in a real mission. Expect this task
+  to surface stalls; that is why it is last.
+- **Scope.** Four subsystems in one spec, at the owner's explicit direction and
+  against a recommendation to split them — roughly four times the surface of
+  phase C, which took ten tasks and twenty-six commits. The build order is what
+  keeps it sequenceable. If the plan outgrows one document, split it at a
+  numbered boundary, never mid-subsystem.
+
+Termination and `world.hash()` coverage are the other two ways this phase
+could go wrong, and both are stated where they are acted on rather than
+repeated here.
