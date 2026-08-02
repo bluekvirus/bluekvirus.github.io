@@ -112,6 +112,24 @@ test('a tick advances time by exactly the fixed step', () => {
 
 test('agents keep apart', () => {
   const w = build('separation');
+  // This test predates combat and checks the separation force among the
+  // SWAT squad, not survival or targeting -- same reasoning as the
+  // neutralized-hostiles fix a few tests up ("an agent given a reachable
+  // goal arrives"). Combat runs live here too (combat.step() fires every
+  // tick regardless of who calls it), and a hostile's exact position at
+  // every tick now depends on its charge/patrol state (this task's melee
+  // fix), which perturbs the single shared combat rng stream and, through
+  // it, which SWAT member gets shot when -- a butterfly effect on an
+  // otherwise-unrelated seed's exact final positions, not a movement defect.
+  // Measured directly: with hostiles left live, this exact seed lands two
+  // SWAT members 0.26m apart at tick 1800 with the melee fix in place
+  // (0.56m without it) -- and with a genuinely broken separation force
+  // (SIM.separationForce zeroed) the same seed collapses two agents to
+  // 0.001m apart, so the gap this asserts on is still a meaningful signal,
+  // not a rubber stamp. Neutralizing the hostiles removes the confound
+  // instead of loosening the bar: identical squad, identical destination,
+  // just without combat's rng-driven timing noise.
+  for (const h of w.agents) if (h.role === 'hostile') h.alive = false;
   const target = w.agents.find((a) => a.role === 'hostage');
   for (const a of w.agents.filter((x) => x.role === 'swat')) {
     w.setGoal(a.id, { x: target.x, z: target.z });
@@ -550,7 +568,13 @@ test('a chasing melee agent closes on its target and holds at strike range', () 
   // motion are the two dry-run files this task's exemption leaves red. Build
   // the scenario by hand instead of waiting on combat.js's own acquisition,
   // the same way the halted-shooter regression above pins a fake engagement.
-  const w = openRoom([{ x: 2, z: 2 }, { x: 10, z: 2 }], 20);
+  // The mark starts within COMBAT.chargeRange (not just sightRange) of the
+  // chaser: a melee agent now only breaks into a charge once its target has
+  // closed to chargeRange (see the charge-range gate in combat.js), so
+  // starting further out than that would never enter the chasing state this
+  // test is about at all -- that gate has its own dedicated test below.
+  const startDist = COMBAT.chargeRange - 1;
+  const w = openRoom([{ x: 2, z: 2 }, { x: 2 + startDist, z: 2 }], 20);
   const [chaser, mark] = w.agents;
   chaser.weapon = 'melee';
   // openRoom only spawns 'swat'; flipping the mark to 'hostile' is the only

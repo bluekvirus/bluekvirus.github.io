@@ -13,6 +13,16 @@ export const COMBAT = Object.freeze({
   sightRange: 12,
   gunRange: 10,
   meleeRange: 1.2,
+  // How close a melee hostile lets its target get before it breaks into a
+  // charge, rather than the instant it acquires a target at up to sightRange
+  // (12m) in the open. Chosen by measurement (see melee-brief.md and
+  // melee-report.md): swept 3-10 on paired 450-mission families with the
+  // sprint fix already in place. Below 5 the charge barely improves on the
+  // pre-fix engagement rate at all; at and above 6 engagement roughly
+  // doubles and keeps climbing only slowly past it, while every point higher
+  // costs more exposure and pushes mission failure up further. 6 is the
+  // smallest value that gets the full doubling.
+  chargeRange: 6,
   gunCooldown: 0.8,
   meleeCooldown: 1.1,
   gunDamage: 25,
@@ -20,7 +30,18 @@ export const COMBAT = Object.freeze({
   swatHp: 75,
   hostileHp: 80,
   hostageHp: 40,
-  swatAccuracy: 0.8,
+  // Retuned 0.80 -> 0.85 alongside chargeRange. NOT a melee-specific lever
+  // (meleeDamage/meleeAccuracy were already measured inert -- see
+  // melee-brief.md -- and touching them again would just repeat that dead
+  // end): this is squad rifle accuracy, raised because effective chargers
+  // now cost the squad more casualties across the whole engagement, gun
+  // fights included, not only melee ones. Raw failure rate at chargeRange=6
+  // with this left at 0.80 averaged 18.9% over seven paired 450-mission
+  // families (range 17.1-20.7%, two families over the 19.2% band top); at
+  // 0.85 every one of the same seven families lands inside the 13.3-19.2%
+  // band (13.6-18.9%, average 15.9%) with melee engagement essentially
+  // unchanged.
+  swatAccuracy: 0.85,
   hostileAccuracy: 0.75,
   meleeAccuracy: 0.75,
   // Ticks between target scans for any one agent. Twelve agents each testing
@@ -66,7 +87,12 @@ export const damageOf = (a) => (a.weapon === 'melee' ? COMBAT.meleeDamage : COMB
 export const rangeOf = (a) => (a.weapon === 'melee' ? COMBAT.meleeRange : COMBAT.gunRange);
 export const cooldownOf = (a) => (a.weapon === 'melee' ? COMBAT.meleeCooldown : COMBAT.gunCooldown);
 
-export function createCombat({ grid, agents, rng, isDoorOpen, step }) {
+// `runSpeed`/`walkSpeed` mirror `SIM.runSpeed`/`SIM.walkSpeed` in world.js.
+// combat.js cannot import world.js (that cycle would fail to resolve — see
+// the header comment above), so the caller passes the numbers in instead;
+// the defaults here exist only so a test harness that omits them still gets
+// production-accurate speeds rather than `undefined`.
+export function createCombat({ grid, agents, rng, isDoorOpen, step, runSpeed = 3.2, walkSpeed = 1.4 }) {
   const distance = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
   // `a.target` is an agent id, not an index into `agents` — the two only
@@ -155,7 +181,29 @@ export function createCombat({ grid, agents, rng, isDoorOpen, step }) {
         if (a.target < 0 && tick % COMBAT.scanInterval === a.id % COMBAT.scanInterval) {
           a.target = acquire(a);
         }
-        a.chasing = a.target >= 0 && a.weapon === 'melee';
+        // A melee agent acquires and holds a target exactly like a gunner
+        // does, out to sightRange -- so it still reacts the instant an enemy
+        // comes into view -- but does not break into a charge from all the
+        // way out there. Only once the target has closed to chargeRange does
+        // it start running it down; beyond that it behaves as it did before
+        // combat existed, following whatever patrol goal orders.js gave it.
+        // Checked every tick (not just on acquisition), so a target that
+        // walks back out past chargeRange calls off the charge just as
+        // promptly as one that walks in starts it.
+        a.chasing = a.target >= 0 && a.weapon === 'melee'
+          && distance(a, byId.get(a.target)) <= COMBAT.chargeRange;
+
+        // A charging melee agent sprints; it drops back to its patrol speed
+        // (walkSpeed — what it spawned with, and what orders.js's patrol
+        // wander never changes) the instant it stops chasing. Read every
+        // tick, not only on the chasing/not-chasing transition, for the same
+        // reason orders.js re-sets `wants` every tick during its own
+        // run/walk phases: cheap, and correct even if something else ever
+        // touched `wants` in between. Only ever written here for a
+        // `weapon === 'melee'` agent, and only SWAT carries a gun (roles.js
+        // never gives one melee), so this can never race orders.js's own
+        // `wants` writes, which are scoped to `swat`.
+        if (a.weapon === 'melee') a.wants = a.chasing ? runSpeed : walkSpeed;
 
         if (a.cooldown > 0) a.cooldown = Math.max(0, a.cooldown - step);
 

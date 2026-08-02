@@ -13,7 +13,13 @@ import { makeRng } from '../rng.js';
 // still assigned by original position (so callers keep indexing the returned
 // `agents` array by id), but the internal iteration order can be scrambled
 // independently, to prove nothing relies on array position matching id.
-const scene = (agents, placements = [], order) => {
+// `speeds`, if given, overrides the runSpeed/walkSpeed createCombat wires a
+// melee agent's `a.wants` to while chasing/not chasing (see combat.js) --
+// deliberately distinct numbers from combat.js's own defaults (which mirror
+// SIM.runSpeed/SIM.walkSpeed) so a test asserting on them is proof the value
+// actually came from this call's wiring, not a coincidental match with
+// whatever combat.js falls back to on its own.
+const scene = (agents, placements = [], order, speeds) => {
   const plan = {
     seed: 'combat', config: { wallThickness: 0.1 },
     bounds: { x: 0, z: 0, w: 20, d: 20 },
@@ -32,6 +38,7 @@ const scene = (agents, placements = [], order) => {
   const combat = createCombat({
     grid, agents: ordered, rng: makeRng('combat:test'),
     isDoorOpen: () => true, step: 1 / 60,
+    ...(speeds ?? {}),
   });
   return { grid, agents: full, combat };
 };
@@ -280,4 +287,61 @@ test('combat is deterministic for a given seed', () => {
     return agents.map((a) => `${a.id}:${a.hp}:${a.alive}:${a.target}`).join('|');
   };
   assert.equal(run(), run());
+});
+
+test('a target beyond chargeRange is acquired and held but not yet chased', () => {
+  // Distance between chargeRange and sightRange: seen and held as a target
+  // (proving acquisition itself is untouched -- still out to sightRange),
+  // but not close enough to break into a charge.
+  const dist = (COMBAT.chargeRange + COMBAT.sightRange) / 2;
+  const { agents, combat } = scene([
+    { role: 'hostile', x: 2, z: 2, weapon: 'melee' },
+    { role: 'swat', x: 2 + dist, z: 2, weapon: 'none', hp: COMBAT.swatHp },
+  ]);
+  for (let t = 0; t < COMBAT.scanInterval; t++) combat.step(t);
+  assert.equal(agents[0].target, 1, 'did not acquire a target it can clearly see within sightRange');
+  assert.equal(agents[0].chasing, false,
+    'started chasing a target from beyond chargeRange -- the gate did nothing');
+
+  // Positive control: walk the same target inside chargeRange and confirm the
+  // gate actually opens. Without this half, a chargeRange check that always
+  // evaluates to false (e.g. a stray `&& false`) would pass the assertion
+  // above for the wrong reason.
+  agents[1].x = 2 + (COMBAT.chargeRange - 0.5);
+  // scanInterval + 1 is not congruent to agent 0's id mod scanInterval (see
+  // the identical reasoning in "a target is dropped the tick it becomes
+  // invalid, not at the next scan" above) -- stepping here proves the
+  // chasing flag is reevaluated every tick, not only at the next scan.
+  combat.step(COMBAT.scanInterval + 1);
+  assert.equal(agents[0].chasing, true,
+    'still not chasing once the target closed inside chargeRange');
+});
+
+test('a chasing melee agent sprints; a merely-holding one walks', () => {
+  const RUN = 5, WALK = 2; // distinct from combat.js's own SIM-mirroring defaults
+  const { agents, combat } = scene([
+    { role: 'hostile', x: 2, z: 2, weapon: 'melee' },
+    { role: 'swat', x: 2 + (COMBAT.chargeRange + 2), z: 2, weapon: 'none', hp: COMBAT.swatHp },
+  ], [], undefined, { runSpeed: RUN, walkSpeed: WALK });
+
+  for (let t = 0; t < COMBAT.scanInterval; t++) combat.step(t);
+  assert.equal(agents[0].target, 1, 'setup failed to acquire the target');
+  assert.equal(agents[0].chasing, false, 'setup started already chasing -- proves nothing about the walk speed');
+  assert.equal(agents[0].wants, WALK,
+    'a melee agent holding a distant target (not yet chasing) should move at its patrol (walk) speed');
+
+  // Bring the target inside chargeRange and let the gate open.
+  agents[1].x = 2 + (COMBAT.chargeRange - 0.5);
+  combat.step(COMBAT.scanInterval + 1);
+  assert.equal(agents[0].chasing, true, 'setup failed to enter the chasing state');
+  assert.equal(agents[0].wants, RUN,
+    'a chasing melee agent should move at the sprint (run) speed, not its patrol speed');
+
+  // And back off out of chargeRange: the sprint should drop away again, not
+  // stick from whatever it was on the previous tick.
+  agents[1].x = 2 + (COMBAT.chargeRange + 2);
+  combat.step(COMBAT.scanInterval + 2);
+  assert.equal(agents[0].chasing, false, 'target retreated out of chargeRange but chasing stayed true');
+  assert.equal(agents[0].wants, WALK,
+    'a melee agent that stopped chasing should drop back to its patrol (walk) speed, not keep sprinting');
 });
