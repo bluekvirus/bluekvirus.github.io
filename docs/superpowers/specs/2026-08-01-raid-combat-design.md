@@ -214,8 +214,13 @@ to kill while `hostileHp 80` is four — a SWAT officer now dies to fewer hits
 than the patroller across from them. This was measured, not accidental:
 lowering `hostileHp` to keep SWAT the tougher side per hit (tried at 50, two
 hits) was rejected because it undershot the failure-rate target by roughly a
-factor of four (held-out measurement: 3.8% failed, versus the ~15-19% band
-this phase targets) and broke an unrelated pre-existing regression test
+factor of four (held-out measurement: 3.8% failed, versus the failure rate
+this phase targets — a final paired sweep of five independent 200-mission
+families put the shipped configuration at a mean of 16.2% with a
+family-to-family range of 13.5-20.0%, so treat the target as a broad band
+around ~16% rather than a tight one; between-family spread is several points
+and any single family's number will mislead) and broke an unrelated
+pre-existing regression test
 (`world.test.js`'s `'agents keep apart'`, which does not expect a corpse
 mid-scenario). `swatHp 75` is what actually produces a genuine contest;
 "four trained shooters" still describes headcount and accuracy (SWAT keep
