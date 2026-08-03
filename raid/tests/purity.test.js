@@ -15,7 +15,8 @@ import path from 'node:path';
 // legitimate there.
 const PURE_FILES = [
   'rng.js', 'floorplan.js', 'roles.js', 'furnish.js',
-  'sim/navgrid.js', 'sim/path.js', 'sim/world.js', 'sim/orders.js', 'sim/combat.js',
+  'sim/navgrid.js', 'sim/path.js', 'sim/world.js', 'sim/combat.js',
+  'sim/search.js', 'sim/director.js', 'sim/squad.js',
 ];
 
 // Read as plain text and never imported — importing a module that touched

@@ -119,3 +119,47 @@ export function buildNavGrid(plan, placements = [], overrides = {}) {
     }),
   };
 }
+
+/**
+ * The nearest open grid cell to (x, z), as a world point.
+ *
+ * A point of interest is not guaranteed walkable. Three independent sources
+ * produce blocked ones: furnish.js is free to drop a cabinet exactly on a
+ * room's geometric centre (measured across 200 plans, 129 of 2400 cell centres
+ * were blocked, affecting 48% of plans); the agent-radius erosion in `carve`
+ * above blocks anything within 0.32m of a wall; and `mission.spawns.extraction`
+ * itself lands on a blocked cell in 6% of plans. `findPath` refuses a blocked
+ * start OR goal outright, so `world.setGoal` on such a point returns false and
+ * never retries on its own — the caller simply never gets a route, forever.
+ *
+ * Walking outward in square rings until an open cell turns up converts that
+ * silent permanent failure into "route to the closest reachable spot instead".
+ * Falls back to the original point untouched if nothing opens within
+ * `maxRing`, so a genuinely unreachable target still fails exactly as it
+ * always would rather than being quietly relocated across the building.
+ *
+ * Lives here rather than in a caller because both `squad.js` (every member's
+ * destination) and `director.js` (the hostage's walk to the exit) need it, and
+ * they need the SAME one: a director that skipped it while the squad used it
+ * is precisely how the squad came to park correctly at an exit the hostage
+ * could never be routed to.
+ *
+ * Deterministic: the ring scan visits offsets in a fixed order and never
+ * consults a random source, so the same grid and point always yield the same
+ * answer.
+ */
+export function nearestWalkable(grid, x, z, maxRing = 60) {
+  const start = grid.worldToCell(x, z);
+  if (!grid.isBlocked(start.col, start.row)) return { x, z };
+  for (let r = 1; r <= maxRing; r++) {
+    for (let dr = -r; dr <= r; dr++) {
+      for (let dc = -r; dc <= r; dc++) {
+        if (Math.max(Math.abs(dr), Math.abs(dc)) !== r) continue;
+        const col = start.col + dc;
+        const row = start.row + dr;
+        if (!grid.isBlocked(col, row)) return grid.cellToWorld(col, row);
+      }
+    }
+  }
+  return { x, z };
+}

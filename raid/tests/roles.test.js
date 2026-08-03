@@ -70,6 +70,29 @@ test('every spawn sits inside the cell it claims', () => {
   }
 });
 
+test('the hostage spawns at its room\'s exact centre', () => {
+  // raid/sim/director.js's search-phase correctness depends on this: a cell
+  // is only marked "searched" once a member is within sight range of its
+  // CENTRE (not merely inside it), which is only a sound proxy for "the
+  // hostage would have been seen" because the hostage sits exactly there.
+  // That coupling is documented in director.js's markVisited comment but
+  // nothing enforces it — a future change here (e.g. scattering the hostage
+  // like every other spawn) would silently reopen the exact "swept the room,
+  // never saw the hostage" bug that fix closed. Caught this way instead of
+  // only in director.test.js so whoever edits roles.js sees the failure in
+  // the file they are actually changing.
+  for (const seed of SEEDS) {
+    const plan = generateFloorplan(seed);
+    const m = assignRoles(plan);
+    const room = plan.cells.find((c) => c.id === m.hostageRoomId);
+    const centreX = room.x + room.w / 2;
+    const centreZ = room.z + room.d / 2;
+    const off = Math.hypot(m.spawns.hostage.x - centreX, m.spawns.hostage.z - centreZ);
+    assert.ok(off < 1e-9,
+      `${seed}: hostage sits ${off.toFixed(3)}m off room ${room.id}'s centre`);
+  }
+});
+
 test('the hostage is in the hostage room and guarded', () => {
   for (const seed of SEEDS) {
     const plan = generateFloorplan(seed);

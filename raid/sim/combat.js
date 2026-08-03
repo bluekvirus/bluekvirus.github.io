@@ -54,7 +54,7 @@ export const COMBAT = Object.freeze({
   // Ticks between target scans for any one agent. Twelve agents each testing
   // line of sight to eleven others every tick is 132 grid traversals per tick
   // against a 2ms budget; staggering by id divides that by six for at most
-  // 0.1s of reaction delay. orders.js staggers its setGoal calls for exactly
+  // 0.1s of reaction delay. squad.js staggers its setGoal calls for exactly
   // the same reason.
   scanInterval: 6,
 });
@@ -193,7 +193,7 @@ export function createCombat({ grid, agents, rng, isDoorOpen, step, runSpeed = 3
         // comes into view -- but does not break into a charge from all the
         // way out there. Only once the target has closed to chargeRange does
         // it start running it down; beyond that it behaves as it did before
-        // combat existed, following whatever patrol goal orders.js gave it.
+        // combat existed, following whatever patrol goal director.js gave it.
         // Checked every tick (not just on acquisition), so a target that
         // walks back out past chargeRange calls off the charge just as
         // promptly as one that walks in starts it.
@@ -201,15 +201,15 @@ export function createCombat({ grid, agents, rng, isDoorOpen, step, runSpeed = 3
           && distance(a, byId.get(a.target)) <= COMBAT.chargeRange;
 
         // A charging melee agent sprints; it drops back to its patrol speed
-        // (walkSpeed — what it spawned with, and what orders.js's patrol
+        // (walkSpeed — what it spawned with, and what director.js's patrol
         // wander never changes) the instant it stops chasing. Read every
         // tick, not only on the chasing/not-chasing transition, for the same
-        // reason orders.js re-sets `wants` every tick during its own
-        // run/walk phases: cheap, and correct even if something else ever
+        // reason squad.js re-sets `wants` every tick for the members it
+        // commands: cheap, and correct even if something else ever
         // touched `wants` in between. Only ever written here for a
         // `weapon === 'melee'` agent, and only SWAT carries a gun (roles.js
-        // never gives one melee), so this can never race orders.js's own
-        // `wants` writes, which are scoped to `swat`.
+        // never gives one melee), so this can never race squad.js's own
+        // `wants` writes, which are scoped to living SWAT members.
         if (a.weapon === 'melee') a.wants = a.chasing ? runSpeed : walkSpeed;
 
         if (a.cooldown > 0) a.cooldown = Math.max(0, a.cooldown - step);
