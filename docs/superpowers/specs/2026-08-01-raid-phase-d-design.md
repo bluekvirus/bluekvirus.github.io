@@ -68,7 +68,7 @@ The pure/browser split holds. All new simulation modules are pure.
 |---|---|---|
 | `raid/sim/director.js` | Objective state machine, outcome, mission clock, and hostile patrol | New |
 | `raid/sim/search.js` | Next room to clear, given the graph and what has been visited | New |
-| `raid/sim/squad.js` | Tactical execution: stack, breach, cover, advance, fall back | New |
+| `raid/sim/squad.js` | Tactical execution: stack, breach, cover, advance, fall back (see deviation below — stack/breach/cover did not ship) | New |
 | `raid/sim/orders.js` | — | **Deleted** |
 | `raid/sim/combat.js` | Ammo, reload, evasion, melee stat block | Modified |
 | `raid/sim/world.js` | Body radius, weapon-specific movement speeds | Modified |
@@ -106,6 +106,20 @@ does not already deliver equally well. The seeded RNG stream above keeps the
 name `${plan.seed}:mission` regardless — it is a string key with no import to
 collide, so the rename pressure that forced the file's name never applied
 to it.
+
+**Deviation from this spec:** `squad.js` shipped without stack, breach, or
+cover. What it actually does is even spread — each living member is placed
+on its own fixed slot point around either the objective (advancing) or a rear
+anchor (falling back), by `slotPoint(point, slot, total)` — plus the fall-back
+rule described under Squad tactics below. There is no door-side staging
+before entry (stack), no ordered first-member-in sequencing (breach), and no
+hold-and-face-the-contact behaviour for members who are not the one currently
+moving (cover): every non-fallen-back member is simply issued its slot point
+and moves toward it, all at once, whenever it has moved far enough to be
+worth a fresh goal. The plan (`docs/superpowers/plans/`) records this
+honestly as a known thin spot, but this spec is the durable, reference
+description of what shipped, and until now it named all four mechanics as
+delivered. See "Squad tactics" below for the corresponding correction.
 
 **Existing tests that import `orders.js` must be migrated, not deleted.**
 `raid/tests/orders.test.js` and `raid/tests/dryrun.test.js` between them hold
@@ -167,9 +181,17 @@ Per-member roles assigned each tick from a single squad state, never randomly:
 - **Cover.** While one member moves, the others hold position facing the
   contact direction and do not advance.
 - **Fall back.** A member below a health threshold retreats toward the squad's
-  rear and stops advancing until it is no longer the most exposed.
+  rear and stops advancing until it is no longer the most exposed (bounded in
+  time, not by hp — see `squad.js` for why).
 
 These are unit assignments derived from squad state, not scripted sequences.
+
+**Did not ship — see the deviation note under Architecture above.** Stack,
+breach, and cover as described above were never built. What shipped is even
+slot spread around the objective (a standing-in for "advance" with no
+staging or ordering) and the fall-back rule as described. Treat the three
+bulleted items above as the original design intent, not as delivered
+behaviour.
 
 ### Ammo and reload
 

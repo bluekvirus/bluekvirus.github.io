@@ -36,6 +36,33 @@ test('nextRoom breaks distance ties on the lower id', () => {
   assert.equal(nextRoom(chain, new Set([2]), 2), 1);
 });
 
+// The chain fixture above lists its cells in ascending id order (0, 1, 2, 3),
+// so "first cell reached in `plan.cells` array order" and "lowest id" happen
+// to be the exact same answer — a tie-break test built on it can pass even if
+// the actual `d === bestDist && cell.id < best` clause is deleted outright,
+// leaving nextRoom silently fall back to array order instead of id order.
+// This fixture is the same 0-1-2-3 topology with `cells` declared in
+// descending id order, so the two rules disagree: array order would answer
+// 3 (the first same-distance cell iterated), id order (the documented
+// contract) answers 1.
+const reversedChain = {
+  seed: 'reversed-chain',
+  cells: [
+    { id: 3, x: 12, z: 0, w: 4, d: 4, kind: 'room' },
+    { id: 2, x: 8, z: 0, w: 4, d: 4, kind: 'room' },
+    { id: 1, x: 4, z: 0, w: 4, d: 4, kind: 'corridor' },
+    { id: 0, x: 0, z: 0, w: 4, d: 4, kind: 'room' },
+  ],
+  adjacency: { 0: [1], 1: [0, 2], 2: [1, 3], 3: [2] },
+};
+
+test('nextRoom breaks distance ties on the lower id, not on cells array order', () => {
+  // 1 and 3 are both one hop from 2, but this fixture iterates 3 before 1 —
+  // array-order-wins would answer 3, id-order-wins (the real contract)
+  // answers 1.
+  assert.equal(nextRoom(reversedChain, new Set([2]), 2), 1);
+});
+
 test('nextRoom returns -1 once everything is visited', () => {
   assert.equal(nextRoom(chain, new Set([0, 1, 2, 3]), 0), -1);
 });

@@ -189,8 +189,7 @@ export function createWorld(plan, mission, placements = []) {
     // its task list from the living squad and then dispatches it staggered
     // over several ticks (see squad.js's one-setGoal-per-tick stagger) can
     // still hand a setGoal to an agent that died in the ticks between: tick()
-    // already
-    // skips dead agents in its movement loop, so a path/goal written here
+    // already skips dead agents in its movement loop, so a path/goal written here
     // after death is never read by movement, never cleared by another death
     // (kill() only runs once, at the moment hp reaches zero), and the corpse
     // holds it forever -- indistinguishable from a genuinely frozen agent to

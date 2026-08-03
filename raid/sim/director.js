@@ -17,6 +17,7 @@ import { makeRng } from '../rng.js';
 import { nearestWalkable } from './navgrid.js';
 import { nextRoom } from './search.js';
 import { SIM } from './world.js';
+import { SQUAD } from './squad.js';
 
 // 160 simulated seconds. A first pass at this constant (6000) was sized
 // against a 45-mission sample whose worst case was 4111 ticks, and was
@@ -101,6 +102,7 @@ export function createDirector(plan, mission) {
     ticks: 0,
     targetCell: -1,
     patrol: new Map(),
+    hostageTarget: null,
   };
 
   // A cell is visited the moment a living member has come within RESCUE_SIGHT
@@ -286,7 +288,24 @@ export function createDirector(plan, mission) {
         // sub-metre relocation a ring search makes.
         if (state.hostageReached) {
           hostage.wants = SIM.walkSpeed;
-          if (!hostage.path) world.setGoal(hostage.id, nearestWalkable(world.grid, exit.x, exit.z));
+          // squad.js documents this exact defect for SWAT (see its update(),
+          // around the `arrived` check): world.js nulls both `path` and `goal`
+          // identically whether an agent arrived or whether its last setGoal
+          // simply failed, so `!hostage.path` alone cannot tell those apart.
+          // Traced on seed revB-8-71: the hostage settles 0.355m from its goal
+          // -- outside SIM.arriveRadius (0.28) -- so world.js never marks it
+          // arrived, walks pathIndex past the end with zero displacement, and
+          // nulls path; re-issuing on bare `!hostage.path` then re-ran the
+          // identical goal forever, one A* every other tick, while also
+          // resetting the goal-stall detector's bookkeeping on every reissue
+          // so it could never accumulate a strike. Tracking the last issued
+          // target and treating "close enough to it" (SQUAD.reissueDistance,
+          // the same tolerance squad.js already uses for the identical
+          // purpose) as arrived breaks the cycle.
+          const target = nearestWalkable(world.grid, exit.x, exit.z);
+          const arrived = state.hostageTarget
+            && Math.hypot(hostage.x - state.hostageTarget.x, hostage.z - state.hostageTarget.z) < SQUAD.reissueDistance;
+          if (!hostage.path && !arrived) { state.hostageTarget = target; world.setGoal(hostage.id, target); }
         }
         const out = [...swat, hostage].every(
           (a) => Math.hypot(a.x - exit.x, a.z - exit.z) < EXTRACT_RADIUS);

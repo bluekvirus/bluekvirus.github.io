@@ -314,6 +314,22 @@ test('two members below the fallback threshold get distinct rear positions', () 
   const d = Math.hypot(swat[0].goal.x - swat[1].goal.x, swat[0].goal.z - swat[1].goal.z);
   assert.ok(d > 0.5,
     `two hurt members were issued the same rear point (${d.toFixed(3)}m apart) — the fallback branch collapsed the slot spread`);
+  // `d > 0.5` alone does not distinguish a rear anchor from the advance
+  // branch: `slotPoint` spreads members around EITHER shared point by the
+  // same fixed per-slot angle, so two different slots produce two distinct
+  // goals — "distinct from each other" — even when both are advancing on the
+  // objective, not falling back from it. What only a genuine fallback can
+  // produce is a goal far from `objective.point` itself (behind the group by
+  // ~SQUAD.fallbackDistance, not spread around it by SQUAD.spread): deleting
+  // the whole fallback rule (`eligible` forced to `false`) leaves both goals
+  // sitting `spread` (1.1m) from the objective and still passes the `d > 0.5`
+  // check above, since two different slots on that same small circle are
+  // already that far apart.
+  for (const a of [swat[0], swat[1]]) {
+    const distFromObjective = Math.hypot(a.goal.x - objective.point.x, a.goal.z - objective.point.z);
+    assert.ok(distFromObjective > SQUAD.spread + 1,
+      `hurt member ${a.id}'s goal is only ${distFromObjective.toFixed(2)}m from the objective — that is an advance-branch slot point, not a fallback rear position`);
+  }
 });
 
 // --- Re-issuing is throttled: at most one setGoal per tick, and an arrived

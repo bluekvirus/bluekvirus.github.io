@@ -376,14 +376,26 @@ test('no agent is ever left frozen short of its goal', () => {
   // Re-measured at the phase D cutover against director + squad (the number
   // was 200 under orders.js, whose missions were far shorter — a beeline to
   // the hostage rather than a building sweep, so the escorted hostage spent
-  // much less time in traffic). Across ~400 missions outside this test's own
-  // 50 (a 250-mission `tail-N` sweep, a 100-mission `fmeas-N` sweep, and the
-  // `widestall-N`/`verify2-N` families): worst 247, on a HOSTAGE being
-  // escorted out, with the next nine worst at 146/99/97/88/51/50/45/40/39. Of
-  // 250 missions' per-mission worst offenders, 236 were SWAT, 13 the hostage
-  // and 1 a hostile. 400 keeps ~1.6x margin over that measured worst while
-  // staying an order of magnitude below the thousands of ticks a genuine
-  // freeze rides out to.
+  // much less time in traffic). The 247-tick figure this comment used to
+  // claim (worst on a HOSTAGE being escorted out, "~1.6x margin") did not
+  // survive a fresh sample and was never re-verified after being written: the
+  // director's extract-phase escort had a live-lock (world.js nulls `path`
+  // and `goal` identically on arrival or on setGoal failure, so `!hostage.path`
+  // alone re-issued an identical goal forever) that this test's own tracker
+  // measures as an ever-growing still-run, not a fixed 247. Measured with this
+  // test's own tracker over 600 fresh missions: worst still-runs of 402, 571
+  // and 566, all on the hostage, all breaching this file's 400 bar. The fixed
+  // 50-seed `dry-N` set above never showed it (peaks at 27), which is exactly
+  // why the false margin was never caught by CI.
+  //
+  // director.js now tracks the hostage's last issued target and skips
+  // re-issuing within SQUAD.reissueDistance of it (mirroring squad.js's own
+  // fix for the identical defect), closing the live-lock. Re-measured
+  // post-fix over a 1500-mission fresh sweep (`revD-N`, room counts 8-12):
+  // hostage worst still-run 25 (down from 571), global worst 183 — now a SWAT
+  // agent, not the hostage — on seed `revD-9-25`. 400 keeps a real ~2.19x
+  // margin over that measured worst while staying an order of magnitude below
+  // the thousands of ticks a genuine freeze rides out to.
   assert.ok(maxStillRun < 400,
     `${stillAt} held a path with zero displacement for ${maxStillRun} consecutive ticks`);
 });
