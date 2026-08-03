@@ -17,25 +17,37 @@ import { makeRng } from '../rng.js';
 import { nextRoom } from './search.js';
 import { SIM } from './world.js';
 
-// 100 simulated seconds. Measured with a stand-in squad brain (Task 3 owns
-// the real one) over 130+ full autonomous missions at 8-12 rooms: a
-// legitimately-progressing run (full sweep, or found early, plus rescue and
-// escort) finished in 4111 ticks worst case, ~2900 median -- see
-// task-2-report.md, Important 3, for the raw numbers. 6000 leaves that worst
-// case a comfortable ~1.5x of headroom without being so large it stops
-// meaning anything.
+// 160 simulated seconds. A first pass at this constant (6000) was sized
+// against a 45-mission sample whose worst case was 4111 ticks, and was
+// itself found to be wrong: an independently-run 100-mission sample with a
+// stand-in squad of the same shape put the real tail much further out --
+// median 4218, p90 6090, p95 6512, max 7079, with 10 of 99 legitimate runs
+// needing more than 6000 ticks. Comparing the 6000 clock against an
+// otherwise-identical 30000-tick one over the same seeds showed 10
+// 'timeout' verdicts, of which 9 were false: missions that actually reached
+// `phase='done'`, `hostageReached=true`, `reason='extracted'`, reported as
+// failures purely because the clock cut them off first. A clock that
+// invalidates 91% of its own 'timeout' verdicts is worse than having no
+// margin at all -- see task-2-report.md, round 3, for the full numbers.
+//
+// 9600 clears the observed 7079-tick max with real margin (~1.36x) without
+// being so large the constant stops meaning anything. This value is still
+// stand-in-dependent (Task 3 has not built the real squad brain yet) --
+// if that measurably shifts the tail, this needs revisiting, and erring
+// high here is deliberate: overshooting costs a slower test, undershooting
+// fabricates failures like the 9-of-10 false timeouts above.
 //
 // This MUST sit BELOW whatever tick ceiling a headless-mission test harness
 // uses, not above it -- a harness that gives up first would see `result`
 // still `null` and misreport a genuine hang as "mission never resolved"
 // instead of the clock's own 'timeout', which is the one failure mode this
 // constant exists to name. (It previously sat at 10800, ABOVE the existing
-// dry-run harness's 7200-tick ceiling, with a comment claiming the opposite
-// relationship -- see task-2-report.md, Important 3, for how that was
-// found and fixed.) Task 4's headless-mission harness must set its own
-// ceiling comfortably above this value -- recommended 9600 -- with enough
-// margin that neither number is a coincidence of the other.
-export const MISSION_LIMIT = 6000;
+// dry-run harness's 7200-tick ceiling -- itself below the observed
+// 7079-tick max with almost no margin -- with a comment claiming the
+// opposite relationship.) Task 4's headless-mission harness must set its
+// own ceiling comfortably above this value -- recommended 12600 -- with
+// enough margin that neither number is a coincidence of the other.
+export const MISSION_LIMIT = 9600;
 
 const PATROL_PAUSE = 2.5;    // seconds a hostile waits before picking a new spot
 const RESCUE_SIGHT = 4.0;    // metres: how close a member must be to see the hostage
@@ -82,7 +94,15 @@ export function createDirector(plan, mission) {
     for (const a of swat) {
       for (const c of plan.cells) {
         const centre = centreOf(c);
-        if (Math.hypot(a.x - centre.x, a.z - centre.z) < RESCUE_SIGHT) { state.visited.add(c.id); break; }
+        // No `break`: cells are no longer disjoint under a radius test the
+        // way they were under plain containment, so an agent can sit within
+        // RESCUE_SIGHT of more than one cell's centre at once (small,
+        // close-together rooms). Stopping at the first match in `plan.cells`
+        // order let that first cell win and silently skipped the others even
+        // when they were also in range -- under-marking only, never a
+        // false-positive or a stall, but there is no reason to leave a cell
+        // unmarked when it has genuinely been seen into.
+        if (Math.hypot(a.x - centre.x, a.z - centre.z) < RESCUE_SIGHT) state.visited.add(c.id);
       }
     }
   };
@@ -184,8 +204,19 @@ export function createDirector(plan, mission) {
         // successes over 30 missions before this line existed. Re-issued
         // only when the hostage has no path (the same "if idle, give a fresh
         // goal" shape patrolHostiles already uses above), not every tick.
-        hostage.wants = SIM.walkSpeed;
-        if (!hostage.path) world.setGoal(hostage.id, exit);
+        // Gated on `hostageReached`, not just on being in this phase: a
+        // still-captive hostage the squad never actually found should not
+        // stand up and walk itself to the exit unescorted. Search-phase
+        // exhaustion (see the 'search' branch above) reaches 'extract'
+        // without ever setting `hostageReached`, and until now that path
+        // was only latent -- Finding 1's fix means the search cannot
+        // actually exhaust without finding the hostage first -- but nothing
+        // here enforced it independently, so a future change to the search
+        // logic could silently resurrect an unescorted walk-out.
+        if (state.hostageReached) {
+          hostage.wants = SIM.walkSpeed;
+          if (!hostage.path) world.setGoal(hostage.id, exit);
+        }
         const out = [...swat, hostage].every(
           (a) => Math.hypot(a.x - exit.x, a.z - exit.z) < EXTRACT_RADIUS);
         if (out && state.hostageReached) {
