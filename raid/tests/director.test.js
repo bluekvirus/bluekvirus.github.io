@@ -98,10 +98,27 @@ test('visited grows as the squad enters cells and never shrinks', () => {
   assert.ok(director.visited.size >= 1, 'the squad never registered entering any cell');
 });
 
-test('hostiles still patrol', () => {
-  const { world, director } = build('patrol');
+// The "stay in their own room" half is migrated from orders.test.js's
+// "hostiles move but stay in their own room". Patrol moved wholesale out of
+// orders.js into director.js at the cutover, and a patrol that wanders a
+// hostile out of its assigned room is a different defect from one that never
+// moves it at all — the old test checked both every tick, and dropping the
+// containment half would have retired a guarantee rather than migrated it.
+test('hostiles still patrol, and stay in their own room while doing it', () => {
+  const { plan, mission, world, director } = build('patrol');
+  const byId = new Map(plan.cells.map((c) => [c.id, c]));
+  const homes = new Map(world.agents.filter((a) => a.role === 'hostile')
+    .map((a, i) => [a.id, byId.get(mission.spawns.hostiles[i].cellId)]));
   const start = world.agents.filter((a) => a.role === 'hostile').map((a) => ({ id: a.id, x: a.x, z: a.z }));
-  for (let i = 0; i < 900; i++) { world.tick(); director.update(world); }
+  for (let i = 0; i < 900; i++) {
+    world.tick(); director.update(world);
+    for (const a of world.agents.filter((x) => x.role === 'hostile')) {
+      const home = homes.get(a.id);
+      assert.ok(a.x >= home.x - 0.5 && a.x <= home.x + home.w + 0.5
+        && a.z >= home.z - 0.5 && a.z <= home.z + home.d + 0.5,
+        `hostile ${a.id} left its room at tick ${i}`);
+    }
+  }
   const moved = world.agents
     .filter((a) => a.role === 'hostile' && a.alive)
     .filter((a) => {

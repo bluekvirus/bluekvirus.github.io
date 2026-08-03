@@ -2,8 +2,8 @@
 //
 // Owns the objective, the outcome, the clock, and the hostiles' patrol — that
 // is, everything that ticks and is not the squad's own tactical brain. It
-// replaces the phase machine in orders.js, and its clock replaces that file's
-// leg watchdogs.
+// replaced the phase machine in orders.js (deleted at the phase D cutover),
+// and its clock replaced that file's leg watchdogs.
 //
 // The clock is not a detail. Every anti-hang guarantee this project had lived
 // in orders.js: LEG_TIMEOUT, LEG_MAX_REISSUES, the reissue-exhaustion escape,
@@ -14,6 +14,7 @@
 // machine, rather than being bolted on later.
 
 import { makeRng } from '../rng.js';
+import { nearestWalkable } from './navgrid.js';
 import { nextRoom } from './search.js';
 import { SIM } from './world.js';
 
@@ -180,9 +181,34 @@ export function createDirector(plan, mission) {
         const from = currentCellOf(swat[0]);
         if (state.targetCell === -1 || state.visited.has(state.targetCell)) {
           state.targetCell = nextRoom(plan, state.visited, from);
+          // `nextRoom` deliberately never returns `fromId` — "where the squad
+          // already is" is not a room to move to next (see search.js). But
+          // STANDING IN a cell is not the same as having SEEN into it: this
+          // director only marks a cell visited once a member is within
+          // RESCUE_SIGHT (4m) of its CENTRE, and room diagonals run 12-22m.
+          // So the lead can be inside the one remaining unvisited cell, six
+          // metres from its middle, and `nextRoom` correctly reports "nowhere
+          // else to go" — which the exhaustion branch below then reads as
+          // "every cell has been searched."
+          //
+          // Measured on seed `widestall-11-14` (11 rooms): at tick 2186 the
+          // only unvisited cell was 2, which was BOTH the hostage's room and
+          // the cell the lead was standing in, 6.15m from its centre. The
+          // search declared itself exhausted, the squad walked to the exit
+          // with `hostageReached` still false, the hostage was never stood up,
+          // and the mission burned the full 9600-tick clock to a `timeout`
+          // with the hostage sitting 34m away. That is precisely the case the
+          // comment on the exhaustion branch below used to claim could not
+          // happen. Targeting `from` closes it: the squad walks to that cell's
+          // own centre, which either marks it visited (and the search moves
+          // on, monotonically) or spots the hostage on the way, since both use
+          // the same RESCUE_SIGHT radius from the same centre point.
+          if (state.targetCell === -1 && !state.visited.has(from)) state.targetCell = from;
         }
-        // Every cell visited and still no hostage. Nothing left to search, so
-        // head for extraction and let the clock or the arrival check end it.
+        // Every cell genuinely seen into and still no hostage. Nothing left to
+        // search, so head for extraction and let the clock end it — note that
+        // `hostageReached` is false on this path, so the 'done' gate below
+        // cannot be satisfied and this can only ever resolve as a failure.
         if (state.targetCell === -1) state.phase = 'extract';
         return;
       }
@@ -213,9 +239,23 @@ export function createDirector(plan, mission) {
         // actually exhaust without finding the hostage first -- but nothing
         // here enforced it independently, so a future change to the search
         // logic could silently resurrect an unescorted walk-out.
+        //
+        // Routed to `nearestWalkable(exit)` rather than to `exit` itself.
+        // `mission.spawns.extraction` lands on a BLOCKED navgrid cell in 6% of
+        // plans (measured over 200), and findPath refuses a blocked goal
+        // outright, so on those plans this setGoal could never succeed even
+        // once: measured 7336 consecutive failures on seed `rr-27` and 6735 on
+        // `squad-int-4` at 12 rooms, each ending in a `timeout` verdict with
+        // the squad parked correctly at the exit and the hostage rooted where
+        // it was rescued. squad.js has always run its own destinations through
+        // the same helper, which is exactly why the squad arrived and the
+        // hostage did not — the asymmetry was the bug, so both callers now use
+        // navgrid.js's shared copy. The arrival check below still measures
+        // against the true `exit`; EXTRACT_RADIUS (3m) comfortably covers the
+        // sub-metre relocation a ring search makes.
         if (state.hostageReached) {
           hostage.wants = SIM.walkSpeed;
-          if (!hostage.path) world.setGoal(hostage.id, exit);
+          if (!hostage.path) world.setGoal(hostage.id, nearestWalkable(world.grid, exit.x, exit.z));
         }
         const out = [...swat, hostage].every(
           (a) => Math.hypot(a.x - exit.x, a.z - exit.z) < EXTRACT_RADIUS);

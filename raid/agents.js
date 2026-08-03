@@ -210,7 +210,7 @@ function combatClip(agent, ticks, durations, latch) {
   return directionalClip(agent);
 }
 
-export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
+export function bindAgents(scene, world, cast, director, agentDiscs = []) {
   // One rig per FIGURE now, not per skeleton. Every figure owns its skeleton
   // and its animation groups (see cast.js), so the old "four SWAT share one
   // pose, drive it from the fastest of them" constraint is gone — which is
@@ -222,7 +222,7 @@ export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
   // hostage's ROOT is fine and does not touch bone-local values at all, so
   // its position and facing are synced like every other agent below — the
   // hostage must be seen leaving with the squad for the rescue to read as
-  // having happened. Its own rig is added later, the moment orders reports
+  // having happened. Its own rig is added later, the moment the director reports
   // the rescue — see the `hostageRescued` handling in sync() below.
   const rigs = new Map(); // agent index -> rig
   cast.figures.forEach((fig, i) => {
@@ -380,13 +380,13 @@ export function bindAgents(scene, world, cast, orders, agentDiscs = []) {
       }
 
       // The moment the squad actually reaches the hostage (ground truth from
-      // orders.js, not just `phase === 'done'` — see the field comment on
+      // director.js, not just `phase === 'done'` — see the field comment on
       // `hostageReached` there), the floor pose is done its job: put the
       // bones back the way seated.js found them and fold the hostage's own
       // (unshared) skeleton into `rigs` so it gets a clip like everyone else
       // from here on. Gated on a local flag, not re-checked once true, so
       // this fires exactly once per cast even though sync() runs every frame.
-      if (!hostageRescued && hostageFigure && orders?.hostageReached) {
+      if (!hostageRescued && hostageFigure && director?.hostageReached) {
         hostageRescued = true;
         hostageFigure.standUp();
         rigs.set(cast.figures.indexOf(hostageFigure), makeRig(hostageFigure));

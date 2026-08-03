@@ -10,6 +10,7 @@
 // blow the per-tick budget and permanently suppress the stall detector — the
 // same reason orders.js staggered its issuing.
 
+import { nearestWalkable } from './navgrid.js';
 import { SIM } from './world.js';
 
 export const SQUAD = Object.freeze({
@@ -57,40 +58,15 @@ const slotPoint = (point, slot, total) => {
   };
 };
 
-// A room or corridor's geometric centre is not guaranteed walkable —
-// furnish.js is free to drop a cabinet exactly there, and the director hands
-// out the geometric centre of the target cell as `objective.point` with no
-// regard for what furnish.js put there: measured across 200 director plans,
-// 129 of 2400 cell centres were blocked navgrid cells (48% of plans hit at
-// least one — and separately, over 58 real blocked-centre objectives driven
-// through this module, 35 had a slot point itself blocked too, not merely the
-// shared centre). Rather than let a destination silently fail forever
-// (setGoal returns false and never retries on its own), walk the nav grid
-// outward in rings from the intended point until an open cell turns up, and
-// route to that instead. Falls back to the original point untouched if
-// nothing opens within a generous radius, so a genuinely unreachable target
-// still fails the same way it always would.
-//
-// Same ring-search shape as orders.js's private nearestWalkable. The two are
-// not shared from a common home in navgrid.js (which both modules already
-// import, and which is where a shared version belongs) because that is a
-// refactor, and this task builds alongside orders.js rather than touching it
-// — moving shared logic out of it is the cutover task's call, not this one's.
-const nearestWalkable = (grid, x, z, maxRing = 60) => {
-  const start = grid.worldToCell(x, z);
-  if (!grid.isBlocked(start.col, start.row)) return { x, z };
-  for (let r = 1; r <= maxRing; r++) {
-    for (let dr = -r; dr <= r; dr++) {
-      for (let dc = -r; dc <= r; dc++) {
-        if (Math.max(Math.abs(dr), Math.abs(dc)) !== r) continue;
-        const col = start.col + dc;
-        const row = start.row + dr;
-        if (!grid.isBlocked(col, row)) return grid.cellToWorld(col, row);
-      }
-    }
-  }
-  return { x, z };
-};
+// Every destination this module issues goes through navgrid.js's
+// `nearestWalkable` first: the director hands out the geometric centre of the
+// target cell as `objective.point` with no regard for what furnish.js put
+// there, and measured across 200 director plans, 129 of 2400 cell centres were
+// blocked navgrid cells (48% of plans hit at least one — and separately, over
+// 58 real blocked-centre objectives driven through this module, 35 had a slot
+// point itself blocked too, not merely the shared centre). See navgrid.js for
+// why a blocked point is a permanent, silent setGoal failure rather than a
+// recoverable one.
 
 export function createSquad(plan) {
   // Last goal actually issued per agent — the intended `want` (for deciding
@@ -220,10 +196,10 @@ export function createSquad(plan) {
       });
 
       // Issue at most one setGoal — one A* query — per tick. Four members all
-      // getting a fresh goal in the same tick is the exact per-tick burst
-      // orders.js staggers away from with its own one-per-tick stageIssue,
-      // for the same reason: setGoal's A* query is not free, and orders.js
-      // was already once found blowing the per-tick budget by firing every
+      // getting a fresh goal in the same tick is the exact per-tick burst the
+      // deleted orders.js staggered away from with its own one-per-tick
+      // stageIssue, for the same reason: setGoal's A* query is not free, and
+      // orders.js was once found blowing the per-tick budget by firing every
       // member's at once. A stale entry (its agent died while queued) costs
       // nothing to drop, so dropping one does not use up this tick's one
       // real attempt.

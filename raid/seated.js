@@ -111,7 +111,7 @@ export function layHostageOnFloor(figure, scene) {
   return {
     /** Put the pre-floor-pose values back on every node the floor pose
      * touched, so the hostage's skeleton is a clean slate for whatever clip
-     * agents.js starts on it next — called once, the moment orders.js
+     * agents.js starts on it next — called once, the moment director.js
      * reports the squad reached the hostage. */
     standUp() {
       for (const [node, { position, rotationQuaternion, scaling }] of restPose) {

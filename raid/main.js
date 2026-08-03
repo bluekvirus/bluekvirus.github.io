@@ -6,7 +6,8 @@ import { layoutProps } from './furnish.js';
 import { buildProps } from './props.js';
 import { populate } from './cast.js';
 import { createWorld, SIM } from './sim/world.js';
-import { createOrders } from './sim/orders.js';
+import { createDirector } from './sim/director.js';
+import { createSquad } from './sim/squad.js';
 import { bindDoors } from './doors.js';
 import { bindAgents } from './agents.js';
 
@@ -30,7 +31,8 @@ let level = null;
 let props = null;
 let cast = null;
 let world = null;
-let orders = null;
+let director = null;
+let squad = null;
 let agentBinding = null;
 let doorBinding = null;
 
@@ -76,7 +78,8 @@ function regenerate(seed = seedInput.value) {
   agentBinding = null;
   doorBinding?.dispose();
   world = createWorld(plan, mission, placements);
-  orders = createOrders(plan, mission);
+  director = createDirector(plan, mission);
+  squad = createSquad(plan);
   doorBinding = bindDoors(scene, world, level.doorLeaves);
   accumulator = 0;
 
@@ -88,7 +91,7 @@ function regenerate(seed = seedInput.value) {
   statsEl.textContent =
     `${rooms} rooms · ${plan.doors.length} doors · hostage ${mission.depth[mission.hostageRoomId]} deep · ${elapsed.toFixed(1)}ms`;
 
-  if (params.has('debug')) window.__raid = { scene, engine, stage, plan, mission, cast, world, orders, sim: SIM, regenerate };
+  if (params.has('debug')) window.__raid = { scene, engine, stage, plan, mission, cast, world, director, squad, sim: SIM, regenerate };
 
   repopulate();
 }
@@ -111,7 +114,7 @@ async function repopulate() {
   // the generation this cast belongs to — a superseded call already bailed
   // out above without touching the binding.
   agentBinding?.dispose();
-  agentBinding = bindAgents(scene, world, cast, orders, level.agentDiscs);
+  agentBinding = bindAgents(scene, world, cast, director, level.agentDiscs);
   if (params.has('debug')) window.__raid.cast = cast;
 }
 
@@ -143,7 +146,11 @@ document.getElementById('stepOnce').addEventListener('click', () => {
   if (!world) return;
   agentBinding?.snapshot();
   world.tick();
-  orders.update(world);
+  // Director first, then squad: the squad executes the objective the director
+  // has just chosen, so reversing these would issue a one-tick-stale objective
+  // on every single leg change.
+  director.update(world);
+  squad.update(world, director.objective);
   // Land exactly on the new state (alpha = 1) instead of the interpolated
   // midpoint the accumulator would otherwise leave behind, so one Step click
   // is visibly one whole tick rather than a fraction of one.
@@ -162,7 +169,9 @@ function advance(dt) {
   while (accumulator >= SIM.step && steps < 8) {
     agentBinding?.snapshot();
     world.tick();
-    orders.update(world);
+    // Director first, then squad — see the Step handler above.
+    director.update(world);
+    squad.update(world, director.objective);
     accumulator -= SIM.step;
     steps++;
   }
@@ -187,17 +196,19 @@ engine.runRenderLoop(() => {
   agentBinding?.sync(world ? accumulator / SIM.step : 0, dt);
   doorBinding?.sync();
 
-  // Casualty count while the fight is live, verdict once it is not. Guarded
-  // because `world`/`orders` are briefly absent while a fresh generation's
-  // failed floorplan/mission attempt leaves them at their previous (null)
-  // value, and read fresh each frame since regenerate() reassigns `orders`.
-  if (world && orders) {
-    if (orders.outcome) {
-      outcomeEl.textContent = orders.outcome === 'success' ? 'HOSTAGE EXTRACTED' : 'MISSION FAILED';
-      outcomeEl.dataset.state = orders.outcome;
+  // Casualty count and sweep progress while the fight is live, verdict once it
+  // is not. Guarded because `world`/`director` are briefly absent while a fresh
+  // generation's failed floorplan/mission attempt leaves them at their previous
+  // (null) value, and read fresh each frame since regenerate() reassigns both.
+  if (world && director) {
+    if (director.result) {
+      outcomeEl.textContent = director.result === 'success'
+        ? 'HOSTAGE EXTRACTED'
+        : `MISSION FAILED — ${director.reason.replace('-', ' ').toUpperCase()}`;
+      outcomeEl.dataset.state = director.result;
     } else {
       const alive = (role) => world.agents.filter((a) => a.role === role && a.alive).length;
-      outcomeEl.textContent = `SWAT ${alive('swat')}/${CAST.swat} · HOSTILES ${alive('hostile')}/${CAST.hostiles}`;
+      outcomeEl.textContent = `SWAT ${alive('swat')}/${CAST.swat} · HOSTILES ${alive('hostile')}/${CAST.hostiles} · ${director.visited.size}/${plan.cells.length} CLEARED`;
       outcomeEl.dataset.state = 'live';
     }
   }

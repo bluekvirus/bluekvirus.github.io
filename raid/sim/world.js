@@ -97,7 +97,7 @@ export function createWorld(plan, mission, placements = []) {
   // nothing ever reorders or splices `agents` afterward — so array position
   // equals id for the whole life of a world. combat.js's target resolution
   // (`byId.get`), the halt/chase branches and `_yieldTo` lookups below
-  // (`agents[...]`), `agentById`, and orders.test.js's `isEngaged` all index
+  // (`agents[...]`), `agentById`, and dryrun.test.js's `isEngaged` all index
   // this array directly by id rather than searching it, and depend on that
   // holding. A caller that reorders `agents` (combat.test.js's `order`
   // fixture does exactly this, deliberately, to prove combat.js itself does
@@ -155,7 +155,7 @@ export function createWorld(plan, mission, placements = []) {
       diedAt: -1,
       // The hostage is a prisoner until the squad reaches it: combat.js
       // treats a captive hostage as untargetable, so hostiles do not shoot
-      // their own leverage. orders.js clears this flag in the rescue phase
+      // their own leverage. director.js clears this flag in the rescue phase
       // once the squad actually reaches the hostage, so from that point on
       // hostiles can target it and the "hostage killed" failure condition
       // becomes reachable.
@@ -187,7 +187,8 @@ export function createWorld(plan, mission, placements = []) {
     if (!a) return false;
     // A corpse cannot be given new orders. Without this, a caller that built
     // its task list from the living squad and then dispatches it staggered
-    // over several ticks (see orders.js's stageIssue) can still hand a
+    // over several ticks (see squad.js's one-setGoal-per-tick stagger) can
+    // still hand a
     // setGoal to an agent that died in the ticks between: tick() already
     // skips dead agents in its movement loop, so a path/goal written here
     // after death is never read by movement, never cleared by another death
