@@ -26,8 +26,19 @@ test('the objective names a real cell to clear', () => {
   director.update(world);
   const o = director.objective;
   assert.equal(o.kind, 'clear');
-  assert.ok(plan.cells.some((c) => c.id === o.cellId), 'objective cell is not in the plan');
+  const cell = plan.cells.find((c) => c.id === o.cellId);
+  assert.ok(cell, 'objective cell is not in the plan');
   assert.ok(Number.isFinite(o.point.x) && Number.isFinite(o.point.z));
+  // Task 3's squad routes on `objective.point` and ignores `cellId` -- a
+  // point that names a real room while sitting somewhere else entirely
+  // (the front door, say) would pass the two assertions above while sending
+  // the squad nowhere near the room it claims to be clearing. Pin the point
+  // to the cell's own centre, which is what `centreOf` in director.js
+  // actually computes.
+  const centreX = cell.x + cell.w / 2;
+  const centreZ = cell.z + cell.d / 2;
+  assert.ok(Math.hypot(o.point.x - centreX, o.point.z - centreZ) < 1,
+    `objective.point (${o.point.x}, ${o.point.z}) is not near cell ${o.cellId}'s centre (${centreX}, ${centreZ})`);
 });
 
 test('a wiped squad fails as squad-lost, not as a timeout', () => {

@@ -15,12 +15,27 @@
 
 import { makeRng } from '../rng.js';
 import { nextRoom } from './search.js';
+import { SIM } from './world.js';
 
-// 180 simulated seconds. Phase C measured a 41s median and a ~67s worst case;
-// this phase adds a building sweep, so the ceiling has to clear a healthy
-// swept run with real margin while staying far enough under the harness's own
-// limit that a genuine hang is still caught rather than masked.
-export const MISSION_LIMIT = 10800;
+// 100 simulated seconds. Measured with a stand-in squad brain (Task 3 owns
+// the real one) over 130+ full autonomous missions at 8-12 rooms: a
+// legitimately-progressing run (full sweep, or found early, plus rescue and
+// escort) finished in 4111 ticks worst case, ~2900 median -- see
+// task-2-report.md, Important 3, for the raw numbers. 6000 leaves that worst
+// case a comfortable ~1.5x of headroom without being so large it stops
+// meaning anything.
+//
+// This MUST sit BELOW whatever tick ceiling a headless-mission test harness
+// uses, not above it -- a harness that gives up first would see `result`
+// still `null` and misreport a genuine hang as "mission never resolved"
+// instead of the clock's own 'timeout', which is the one failure mode this
+// constant exists to name. (It previously sat at 10800, ABOVE the existing
+// dry-run harness's 7200-tick ceiling, with a comment claiming the opposite
+// relationship -- see task-2-report.md, Important 3, for how that was
+// found and fixed.) Task 4's headless-mission harness must set its own
+// ceiling comfortably above this value -- recommended 9600 -- with enough
+// margin that neither number is a coincidence of the other.
+export const MISSION_LIMIT = 6000;
 
 const PATROL_PAUSE = 2.5;    // seconds a hostile waits before picking a new spot
 const RESCUE_SIGHT = 4.0;    // metres: how close a member must be to see the hostage
@@ -44,15 +59,30 @@ export function createDirector(plan, mission) {
     patrol: new Map(),
   };
 
-  // A cell is visited the moment a living member is inside it, and never
-  // reverts. That monotonicity IS the termination argument for the sweep: key
-  // this on "cleared of hostiles" instead and a hostile the squad cannot kill,
-  // or one that wanders in behind them, leaves a cell permanently unvisited
-  // and the search goes round forever.
+  // A cell is visited the moment a living member has come within RESCUE_SIGHT
+  // of its CENTRE, not merely inside its bounds, and never reverts. That
+  // monotonicity IS the termination argument for the sweep: key this on
+  // "cleared of hostiles" instead and a hostile the squad cannot kill, or one
+  // that wanders in behind them, leaves a cell permanently unvisited and the
+  // search goes round forever.
+  //
+  // Centre proximity, not mere entry, is load-bearing: the hostage always
+  // spawns at exactly its room's centre (roles.js), and a member sees it the
+  // moment they are within RESCUE_SIGHT of that same point (the check below,
+  // in 'search'). Marking a cell visited on bare entry let a member cross the
+  // threshold of a large room, flip it to "done" on that same step, and have
+  // `nextRoom` divert them to a different cell before they ever got near the
+  // middle -- measured at 20 of 45 missions entering the hostage's room
+  // without ever seeing the hostage, since room diagonals run 12-22m against
+  // a 4m sight radius. Requiring the same distance used to spot the hostage
+  // is what makes "this room is done" and "anything in it would have been
+  // seen" the same claim, so reaching that bar for the hostage's own room
+  // cannot help but also satisfy the sight check below in the same tick.
   const markVisited = (swat) => {
     for (const a of swat) {
       for (const c of plan.cells) {
-        if (inCell(a, c)) { state.visited.add(c.id); break; }
+        const centre = centreOf(c);
+        if (Math.hypot(a.x - centre.x, a.z - centre.z) < RESCUE_SIGHT) { state.visited.add(c.id); break; }
       }
     }
   };
@@ -145,6 +175,17 @@ export function createDirector(plan, mission) {
 
       if (state.phase === 'extract') {
         const exit = mission.spawns.extraction;
+        // The hostage is an NPC, not squad tactics, so escorting it out is the
+        // director's job, not Task 3's: world.js spawns it with `wants: 0`
+        // (a captive does not walk itself anywhere), and the only place that
+        // used to raise it was orders.js's extract phase, which the cutover
+        // deletes. Without this, `hostage.x/z` never change and the extract
+        // arrival check above can never be satisfied — measured at 0
+        // successes over 30 missions before this line existed. Re-issued
+        // only when the hostage has no path (the same "if idle, give a fresh
+        // goal" shape patrolHostiles already uses above), not every tick.
+        hostage.wants = SIM.walkSpeed;
+        if (!hostage.path) world.setGoal(hostage.id, exit);
         const out = [...swat, hostage].every(
           (a) => Math.hypot(a.x - exit.x, a.z - exit.z) < EXTRACT_RADIUS);
         if (out && state.hostageReached) {
