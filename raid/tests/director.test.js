@@ -110,7 +110,11 @@ test('hostiles still patrol, and stay in their own room while doing it', () => {
   const homes = new Map(world.agents.filter((a) => a.role === 'hostile')
     .map((a, i) => [a.id, byId.get(mission.spawns.hostiles[i].cellId)]));
   const start = world.agents.filter((a) => a.role === 'hostile').map((a) => ({ id: a.id, x: a.x, z: a.z }));
-  for (let i = 0; i < 900; i++) {
+  // 2400 ticks, matching the reach orders.test.js's version had. The director
+  // test around it ran 900, and shortening a migrated guarantee by 62% in the
+  // one step whose whole purpose is "migration must not weaken" bought nothing
+  // -- it passes identically at 2400.
+  for (let i = 0; i < 2400; i++) {
     world.tick(); director.update(world);
     for (const a of world.agents.filter((x) => x.role === 'hostile')) {
       const home = homes.get(a.id);

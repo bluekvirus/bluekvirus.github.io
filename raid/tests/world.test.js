@@ -407,18 +407,19 @@ test('a dead agent stops moving and stays put', () => {
   assert.equal(a.path, null);
 });
 
-// Regression: orders.js's stageIssue snapshots its task list from the living
-// squad and drains one setGoal call per tick, staggered across several ticks
-// (see the comment on state.issueQueue there). If combat kills that agent in
-// one of the ticks between the snapshot and its own turn in the queue,
-// setGoal still ran against it -- tick()'s movement loop skips dead agents
+// Regression: a caller that snapshots its task list from the living squad and
+// then drains it one setGoal call per tick, staggered across several ticks,
+// can outlive its own snapshot. The now-deleted orders.js did this with its
+// stageIssue; squad.js does the same thing today with its one-setGoal-per-tick
+// `pending` queue. If combat kills an agent in one of the ticks between the
+// snapshot and its own turn in the queue, setGoal still ran against it -- tick()'s movement loop skips dead agents
 // entirely, so nothing downstream of that call was ever going to clear the
 // path/goal it wrote, and the corpse held it forever. Reproduced directly: a
 // corpse held a path for 1,981 ticks of zero displacement before this guard,
-// which is exactly what two of orders.test.js's stall trackers would have
-// misread as a live movement regression. Refusing here, in the one place a
-// goal is ever written, covers every caller (present and future), not only
-// orders.js's own staggered dispatch.
+// which is exactly what dryrun.test.js's two stall trackers would misread as a
+// live movement regression. Refusing here, in the one place a goal is ever
+// written, covers every caller (present and future), not only whichever module
+// currently happens to stagger its dispatch.
 test('setGoal refuses to command a corpse', () => {
   const w = openRoom([{ x: 2, z: 2 }], 20);
   const a = w.agents[0];

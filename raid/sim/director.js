@@ -31,23 +31,40 @@ import { SIM } from './world.js';
 // invalidates 91% of its own 'timeout' verdicts is worse than having no
 // margin at all -- see task-2-report.md, round 3, for the full numbers.
 //
-// 9600 clears the observed 7079-tick max with real margin (~1.36x) without
-// being so large the constant stops meaning anything. This value is still
-// stand-in-dependent (Task 3 has not built the real squad brain yet) --
-// if that measurably shifts the tail, this needs revisiting, and erring
-// high here is deliberate: overshooting costs a slower test, undershooting
-// fabricates failures like the 9-of-10 false timeouts above.
+// 9600 was chosen against that stand-in sample, where it cleared the observed
+// 7079-tick max by ~1.36x. THAT MARGIN NO LONGER HOLDS, and this comment says
+// so rather than leaving the flattering number standing.
+//
+// Re-measured at the phase D cutover against the real squad (Task 3) driven
+// with this director exactly as main.js drives them, over ~450 missions across
+// 8-12 rooms (the `tail-*` 250, `fmeas-*` 100, `widestall-*` 100 families plus
+// the `dry-*`/`verify2-*`/`e2e-*` sets): **worst observed run 8757 ticks**, on
+// seed `widestall-11-14` at 11 rooms, which resolves `success`/`extracted`.
+// That is a margin of **1.10x**, not 1.36x. The real squad sweeps the whole
+// building instead of beelining to the hostage, so it legitimately takes much
+// longer than the stand-in this constant was sized against -- exactly the
+// "if that measurably shifts the tail, this needs revisiting" case the
+// previous version of this comment anticipated.
+//
+// The constant is deliberately NOT moved here. No measured mission has
+// actually hit it (0 timeouts across all ~450), so nothing is being
+// fabricated today, and raising the project's single remaining anti-hang
+// bound is a change that wants its own before/after measurement rather than
+// being folded into a cutover. But 1.10x is thin: a ~10% slowdown anywhere in
+// the squad, the pathing, or the combat model would start manufacturing false
+// 'timeout' verdicts, which is precisely the failure this constant's own
+// history is a record of. Raising it is the recommended next piece of work;
+// erring high costs only a slower test.
 //
 // This MUST sit BELOW whatever tick ceiling a headless-mission test harness
 // uses, not above it -- a harness that gives up first would see `result`
 // still `null` and misreport a genuine hang as "mission never resolved"
 // instead of the clock's own 'timeout', which is the one failure mode this
-// constant exists to name. (It previously sat at 10800, ABOVE the existing
-// dry-run harness's 7200-tick ceiling -- itself below the observed
-// 7079-tick max with almost no margin -- with a comment claiming the
-// opposite relationship.) Task 4's headless-mission harness must set its
-// own ceiling comfortably above this value -- recommended 12600 -- with
-// enough margin that neither number is a coincidence of the other.
+// constant exists to name. (It previously sat at 10800, ABOVE the then
+// dry-run harness's 7200-tick ceiling, with a comment claiming the opposite
+// relationship.) Satisfied as of the cutover: dryrun.test.js's MAX_TICKS is
+// 12600, comfortably above this value, with enough margin that neither number
+// is a coincidence of the other.
 export const MISSION_LIMIT = 9600;
 
 const PATROL_PAUSE = 2.5;    // seconds a hostile waits before picking a new spot

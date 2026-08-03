@@ -193,20 +193,40 @@ test('a full headless mission completes cleanly at every room count', () => {
           `${seed}: surviving hostile ${a.id} never moved (${distance.get(a.id).toFixed(1)}m)`);
       }
 
-      // Per seed: the squad must have seen into strictly more cells than the
-      // scripted route it replaced would ever have entered. orders.js walked
-      // the BFS shortest path from the entry to the hostage's room, whose cell
-      // count is exactly `depth[hostageRoomId] + 1` (verified over 200 plans
-      // against a direct re-implementation of that BFS). This is the per-seed
-      // form of the phase's win condition — "it searches rather than beelines"
-      // — and unlike a per-seed coverage floor it stays meaningful on seeds
-      // where the mission legitimately ends early, because the bar moves with
-      // how deep the hostage actually was. Measured margin across this fixed
-      // set: +1 cell at worst (e2e-8-0, 5 cells against a 4-cell route), +8 at
-      // best.
+      // Per seed: the squad must have seen into strictly more cells than there
+      // were ROOMS ON the scripted route it replaced.
+      //
+      // Be precise about what this bounds, because the obvious reading is
+      // wrong. `depth[hostageRoomId] + 1` is the LENGTH of orders.js's BFS
+      // shortest path from the entry to the hostage's room — the number of
+      // cells it deliberately walked through — verified over 200 plans against
+      // a direct re-implementation of that BFS. It is NOT how many cells
+      // orders.js measurably swept, which was always more: walking a corridor
+      // brings you within the 4m marking radius of rooms you never entered.
+      // Driving the real orders.js over these same 20 seeds with this same
+      // marking rule, it swept a mean of 6.25 cells against a mean route
+      // length of 4.50, and cleared this very bar on 16 of the 20.
+      //
+      // So this is a structural bar ("did the squad go beyond the corridor the
+      // beeline would have walked"), not a claim to beat orders.js seed for
+      // seed. That stronger bar was measured and does NOT hold: the squad
+      // sweeps more than orders.js on 17 of 20 seeds, but less on e2e-8-0
+      // (5 vs 7) and e2e-10-3 (7 vs 8), and ties on e2e-11-3 (8 vs 8) — for
+      // exactly the reason the per-seed coverage floor was rejected above, that
+      // a search which finds the hostage early legitimately stops early. The
+      // aggregate assertion at the end of this test is where beating the
+      // scripted route is actually claimed, and there it is not close:
+      // 191 cells against 125 over the same seeds, 1.53x.
+      //
+      // Still a real bar rather than a formality: orders.js itself would have
+      // failed it on 4 of these 20 seeds (e2e-8-2, e2e-8-3, e2e-9-3, e2e-12-1),
+      // and a director sabotaged to beeline straight at the hostage room fails
+      // it on 10 of 20. Measured margin for the current squad across this fixed
+      // set: +1 cell at worst (e2e-8-0, 5 cells against a 4-cell route), +9 at
+      // best (e2e-12-1, 14 against 5).
       const scriptedRouteCells = mission.depth[mission.hostageRoomId] + 1;
       assert.ok(director.visited.size > scriptedRouteCells,
-        `${seed}: swept ${director.visited.size} cells, no more than the ${scriptedRouteCells}-cell scripted route it replaced`);
+        `${seed}: swept ${director.visited.size} cells, no more than the ${scriptedRouteCells} rooms on the scripted route it replaced`);
 
       sweptCells += director.visited.size;
       totalCells += plan.cells.length;
@@ -232,10 +252,11 @@ test('a full headless mission completes cleanly at every room count', () => {
   //
   // The 0.7 floor is not tuned to this number, and was not lowered to fit it.
   // Driving the deleted orders.js over these same 20 seeds with this same
-  // marking rule measured an aggregate of 0.522, a per-seed mean of 0.522, and
-  // a per-seed MAXIMUM of exactly 0.700 that no single seed exceeded — so the
-  // scripted route could not have passed this assertion in either form.
-  // Measured here: 191/240 = 0.796.
+  // marking rule measured an aggregate of 125/240 = 0.5208, and a per-seed
+  // MAXIMUM of exactly 0.700 that no single seed exceeded — so the scripted
+  // route could not have passed this assertion in either form. A director
+  // sabotaged to beeline straight at the hostage's room scores 108/240 = 0.450.
+  // Measured here: 191/240 = 0.7958.
   assert.ok(sweptCells / totalCells > 0.7,
     `the squad swept only ${sweptCells} of ${totalCells} cells across the seed set (${(sweptCells / totalCells * 100).toFixed(1)}%) — the scripted route this phase replaced managed 52%`);
 });
@@ -554,14 +575,26 @@ test('the hostage is escorted out even when the extraction point is not itself w
 // the squad had already swept 12 of 13 cells and was physically inside the
 // last one, so "did it actually finish searching" is the question, and a
 // win/loss on a live firefight is not.
+//
+// There is deliberately NO `reason !== 'timeout'` assertion here, though the
+// defect did manifest as a timeout. This seed is the slowest mission measured
+// anywhere in phase D: it resolves at 8757 of the 9600-tick clock — 8.8%
+// headroom — so a timeout assertion would flip on roughly a 10% slowdown
+// anywhere in the simulation, and its failure message would then point a
+// future reader at this search-exhaustion defect when the real cause was
+// MISSION_LIMIT being too tight (see the note on that constant in
+// director.js). `hostageReached` is set at tick 7017 on this seed, 1.37x
+// inside the clock against the verdict's 1.10x, so it is the more robust
+// signal as well as the more specific one. It is not unconditionally immune —
+// a 1.4x slowdown would break it too — but at that point the clock itself is
+// the thing that needs fixing, and every other long-run test in this file
+// would be saying so alongside it.
 test('the search does not give up while the squad is standing in an unsearched room', () => {
-  const { world, director, squad } = build('widestall-11-14', 11);
+  const { plan, world, director, squad } = build('widestall-11-14', 11);
   let ticks = 0;
   while (director.result === null && ticks < MAX_TICKS) { step(world, director, squad); ticks++; }
   assert.ok(director.hostageReached,
-    `the search ended without ever finding the hostage (${director.result}/${director.reason} at ${ticks} ticks, ${director.visited.size} cells swept)`);
-  assert.notEqual(director.reason, 'timeout',
-    `the mission ran out the ${MISSION_LIMIT}-tick clock instead of finishing its sweep`);
+    `the search ended without ever finding the hostage (${director.result}/${director.reason} at ${ticks} ticks, ${director.visited.size} of ${plan.cells.length} cells swept)`);
 });
 
 // Migrated from orders.test.js's "the hostage stays put until rescued" and
