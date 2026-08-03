@@ -23,13 +23,17 @@ import { rangeOf, COMBAT } from '../sim/combat.js';
 // retired with the old ones.
 
 // The harness ceiling must sit ABOVE the director's own MISSION_LIMIT clock,
-// not below it. At 7200 (the pre-cutover value) it sat below the 9600-tick
+// not below it. At 7200 (the pre-cutover value) it sat below the then 9600-tick
 // clock, so `director.result` would still be null when the loop gave up and
 // every genuine clock 'timeout' verdict would have been misreported as
 // "mission never resolved" — the one verdict this harness exists to be able
-// to observe would have been unobservable. 12600 clears 9600 with enough
-// margin (1.3x) that neither number is a coincidence of the other.
-const MAX_TICKS = 12600;
+// to observe would have been unobservable. 12600 cleared 9600 with 1.3x margin.
+//
+// Task 5 raised MISSION_LIMIT 9600 -> 12000 (see director.js for the
+// before/after measurement behind that number), so this is raised alongside
+// it, 12600 -> 15600, keeping the same 1.3x margin over the clock it exists to
+// sit above rather than letting the two drift into an accidental near-tie.
+const MAX_TICKS = 15600;
 
 // Mirrors world.js's own two "legitimately holding position because of
 // combat" cases exactly (see the tick() branches there), so the stall trackers
@@ -577,18 +581,18 @@ test('the hostage is escorted out even when the extraction point is not itself w
 // win/loss on a live firefight is not.
 //
 // There is deliberately NO `reason !== 'timeout'` assertion here, though the
-// defect did manifest as a timeout. This seed is the slowest mission measured
-// anywhere in phase D: it resolves at 8757 of the 9600-tick clock — 8.8%
-// headroom — so a timeout assertion would flip on roughly a 10% slowdown
-// anywhere in the simulation, and its failure message would then point a
-// future reader at this search-exhaustion defect when the real cause was
-// MISSION_LIMIT being too tight (see the note on that constant in
-// director.js). `hostageReached` is set at tick 7017 on this seed, 1.37x
-// inside the clock against the verdict's 1.10x, so it is the more robust
-// signal as well as the more specific one. It is not unconditionally immune —
-// a 1.4x slowdown would break it too — but at that point the clock itself is
-// the thing that needs fixing, and every other long-run test in this file
-// would be saying so alongside it.
+// defect did manifest as a timeout. This seed remains the slowest mission
+// measured anywhere in phase D: at the cutover it resolved at 8757 of the
+// then-9600-tick clock, an 8.8% headroom that a ~10% slowdown anywhere in the
+// simulation would have erased. Task 5 re-measured this exact tail (a fresh
+// 2500-mission uncapped sweep did not exceed it) and raised MISSION_LIMIT
+// 9600 -> 12000 on the strength of that measurement (see the note on that
+// constant in director.js) — this seed now resolves at 8757 of 12000, a much
+// more comfortable 1.37x margin. `hostageReached` is set at tick 7017 on this
+// seed, 1.71x inside the now-12000 clock, so it remains the more robust
+// signal as well as the more specific one — it is not unconditionally immune,
+// but the margin behind both numbers is real now rather than a rounding
+// error away from a false timeout.
 test('the search does not give up while the squad is standing in an unsearched room', () => {
   const { plan, world, director, squad } = build('widestall-11-14', 11);
   let ticks = 0;

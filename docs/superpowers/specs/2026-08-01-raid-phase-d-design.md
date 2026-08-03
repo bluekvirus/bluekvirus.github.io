@@ -66,7 +66,7 @@ The pure/browser split holds. All new simulation modules are pure.
 
 | File | Responsibility | Change |
 |---|---|---|
-| `raid/sim/mission.js` | Objective state machine, outcome, mission clock, and hostile patrol | New |
+| `raid/sim/director.js` | Objective state machine, outcome, mission clock, and hostile patrol | New |
 | `raid/sim/search.js` | Next room to clear, given the graph and what has been visited | New |
 | `raid/sim/squad.js` | Tactical execution: stack, breach, cover, advance, fall back | New |
 | `raid/sim/orders.js` | — | **Deleted** |
@@ -86,13 +86,26 @@ The pure/browser split holds. All new simulation modules are pure.
 graph question with no notion of agents, and it should be testable without
 constructing a world.
 
-`mission.js` is the top-level director — it ticks everything that is not the
-squad's tactical brain, which includes the hostile patrol loop relocated out
-of `orders.js`. That relocation is a lift-and-shift, not a rewrite: hostiles
-keep the behaviour and the seeded `${plan.seed}:orders` stream they have
-today, renamed to `${plan.seed}:mission`. Because renaming the stream changes
-every hostile's patrol draws, replay hashes shift for every seed — expected,
-and not a regression.
+`director.js` (shipped under that name, not `mission.js` — see below) is the
+top-level director — it ticks everything that is not the squad's tactical
+brain, which includes the hostile patrol loop relocated out of `orders.js`.
+That relocation is a lift-and-shift, not a rewrite: hostiles keep the
+behaviour and the seeded `${plan.seed}:orders` stream they have today,
+renamed to `${plan.seed}:mission`. Because renaming the stream changes every
+hostile's patrol draws, replay hashes shift for every seed — expected, and
+not a regression.
+
+**Deviation from this spec:** the module shipped as `raid/sim/director.js`,
+not `raid/sim/mission.js`. `mission` was already taken — it is the name this
+codebase uses for `assignRoles()`'s return value (entry/hostage room ids,
+spawns, door-depth map), which every module in this table already takes as a
+parameter named `mission`. A factory called `createMission(plan, mission)`
+returning a differently-meaning `mission` object would collide with that name
+in every call site and every reader's head, for no benefit `director.js`
+does not already deliver equally well. The seeded RNG stream above keeps the
+name `${plan.seed}:mission` regardless — it is a string key with no import to
+collide, so the rename pressure that forced the file's name never applied
+to it.
 
 **Existing tests that import `orders.js` must be migrated, not deleted.**
 `raid/tests/orders.test.js` and `raid/tests/dryrun.test.js` between them hold

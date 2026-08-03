@@ -40,21 +40,35 @@ import { SIM } from './world.js';
 // 8-12 rooms (the `tail-*` 250, `fmeas-*` 100, `widestall-*` 100 families plus
 // the `dry-*`/`verify2-*`/`e2e-*` sets): **worst observed run 8757 ticks**, on
 // seed `widestall-11-14` at 11 rooms, which resolves `success`/`extracted`.
-// That is a margin of **1.10x**, not 1.36x. The real squad sweeps the whole
+// That was a margin of **1.10x**, not 1.36x. The real squad sweeps the whole
 // building instead of beelining to the hostage, so it legitimately takes much
 // longer than the stand-in this constant was sized against -- exactly the
 // "if that measurably shifts the tail, this needs revisiting" case the
-// previous version of this comment anticipated.
+// previous version of this comment anticipated. At the cutover the constant
+// was deliberately left at 9600 anyway: no measured mission had actually hit
+// it, so nothing was being fabricated, and raising the project's only
+// remaining anti-hang bound wanted its own before/after rather than being
+// folded into that cutover.
 //
-// The constant is deliberately NOT moved here. No measured mission has
-// actually hit it (0 timeouts across all ~450), so nothing is being
-// fabricated today, and raising the project's single remaining anti-hang
-// bound is a change that wants its own before/after measurement rather than
-// being folded into a cutover. But 1.10x is thin: a ~10% slowdown anywhere in
-// the squad, the pathing, or the combat model would start manufacturing false
-// 'timeout' verdicts, which is precisely the failure this constant's own
-// history is a record of. Raising it is the recommended next piece of work;
-// erring high costs only a slower test.
+// Task 5 is that before/after. A fresh, uncapped sweep (no MISSION_LIMIT
+// applied at all, so nothing could be truncated) of 1000 missions -- 200
+// seeds at each of 8-12 target rooms, none overlapping any prior sample --
+// plus a further 1500-mission check concentrated on the 10-12-room end where
+// the tail is worst: **0 hangs across all 2500**, ticks median 2688, p90 5921,
+// p95 6581, p99 7544, max **8619** (`sweep5-11-45`, 13 cells). That reproduces
+// the shape of the earlier ~450-mission measurement almost exactly and did not
+// exceed it -- `widestall-11-14`'s 8757 remains the highest tick count ever
+// observed for this squad, re-confirmed bit-for-bit unchanged on this same
+// tree. Across every sample gathered for this constant, roughly 3000 missions
+// combined, nothing has ever resolved above 8757.
+//
+// 12000 is chosen against that combined worst-known tail: a margin of
+// **1.370x** over 8757, 1.393x over the fresh sweep's own max, 1.590x over its
+// p99 -- comfortably real margin, not a rounding error the way 1.10x was. It
+// is deliberately not pushed further just because headroom is cheap: 12000
+// keeps this constant's own history (6000 -> 9600 -> 12000, each raise
+// following a measurement, none following a guess) legible, and stays well
+// clear of dryrun.test.js's MAX_TICKS (see below).
 //
 // This MUST sit BELOW whatever tick ceiling a headless-mission test harness
 // uses, not above it -- a harness that gives up first would see `result`
@@ -62,10 +76,10 @@ import { SIM } from './world.js';
 // instead of the clock's own 'timeout', which is the one failure mode this
 // constant exists to name. (It previously sat at 10800, ABOVE the then
 // dry-run harness's 7200-tick ceiling, with a comment claiming the opposite
-// relationship.) Satisfied as of the cutover: dryrun.test.js's MAX_TICKS is
-// 12600, comfortably above this value, with enough margin that neither number
-// is a coincidence of the other.
-export const MISSION_LIMIT = 9600;
+// relationship.) dryrun.test.js's MAX_TICKS is raised alongside this constant,
+// to 15600 -- 1.3x above this value, the same margin the harness ceiling has
+// always kept, so neither number is a coincidence of the other.
+export const MISSION_LIMIT = 12000;
 
 const PATROL_PAUSE = 2.5;    // seconds a hostile waits before picking a new spot
 const RESCUE_SIGHT = 4.0;    // metres: how close a member must be to see the hostage
