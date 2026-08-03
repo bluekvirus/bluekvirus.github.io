@@ -145,6 +145,7 @@ export function createWorld(plan, mission, placements = []) {
       _yieldTo: -1,
       weapon: spawn.weapon ?? (role === 'hostage' ? 'none' : 'gun'),
       hp: role === 'swat' ? COMBAT.swatHp : role === 'hostage' ? COMBAT.hostageHp : COMBAT.hostileHp,
+      hpMax: role === 'swat' ? COMBAT.swatHp : role === 'hostage' ? COMBAT.hostageHp : COMBAT.hostileHp,
       alive: true,
       target: -1,
       chasing: false,
