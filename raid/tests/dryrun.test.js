@@ -33,6 +33,15 @@ import { rangeOf, COMBAT } from '../sim/combat.js';
 // before/after measurement behind that number), so this is raised alongside
 // it, 12600 -> 15600, keeping the same 1.3x margin over the clock it exists to
 // sit above rather than letting the two drift into an accidental near-tie.
+//
+// This constant is a test-harness loop bound, not a `SQUAD` or director
+// constant, so raising it sits outside the letter of Task 5's tuning scope
+// (which named only those two). It is called out here as a deliberate,
+// recorded deviation rather than a routine tuning edit: it MUST move in
+// lockstep with MISSION_LIMIT specifically because it sits above that clock
+// (see the paragraph above) — leaving it at 12600 would recreate the exact
+// failure this comment already describes, a harness that gives up before the
+// clock does and launders a real `timeout` into "mission never resolved."
 const MAX_TICKS = 15600;
 
 // Mirrors world.js's own two "legitimately holding position because of
