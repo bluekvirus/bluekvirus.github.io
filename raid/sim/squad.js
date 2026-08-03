@@ -152,8 +152,18 @@ export function createSquad(plan) {
 
         let hurt;
         if (!eligible) {
+          // Ineligible (healthy, extracting, or already spent) means "do not
+          // fall back right now" — it must NOT mean "forget how much of the
+          // window is already used." Deleting the countdown here handed a
+          // fresh, full SQUAD.fallbackTicks budget to any member ineligible
+          // for even a single tick, which for a member that dips in and out
+          // of eligibility (extract flips it off, a later phase flips it
+          // back on) never lets the countdown reach zero at all — the exact
+          // permanent-retreat bug this window exists to prevent, just
+          // reinstated under cover of "ineligible right now." Leaving the
+          // Map entry untouched here is what makes the countdown resume
+          // where it left off instead of restarting.
           hurt = false;
-          fallbackTicksLeft.delete(a.id);
         } else {
           const remaining = fallbackTicksLeft.get(a.id) ?? SQUAD.fallbackTicks;
           if (remaining <= 0) {
@@ -226,8 +236,10 @@ export function createSquad(plan) {
         break;
       }
 
-      // A member that died still holds a stale entry; drop it so a respawn or
-      // an id reuse cannot inherit someone else's destination.
+      // A member that died still holds a stale entry in every one of these
+      // per-agent maps/sets; drop it from all of them so a respawn or an id
+      // reuse cannot inherit someone else's destination, retreat countdown,
+      // or spent-fallback status.
       for (const id of [...issued.keys()]) {
         const agent = world.agentById(id);
         if (!agent || !agent.alive) issued.delete(id);
@@ -235,6 +247,14 @@ export function createSquad(plan) {
       for (const id of [...pending.keys()]) {
         const agent = world.agentById(id);
         if (!agent || !agent.alive) pending.delete(id);
+      }
+      for (const id of [...fallbackTicksLeft.keys()]) {
+        const agent = world.agentById(id);
+        if (!agent || !agent.alive) fallbackTicksLeft.delete(id);
+      }
+      for (const id of [...fallbackSpent]) {
+        const agent = world.agentById(id);
+        if (!agent || !agent.alive) fallbackSpent.delete(id);
       }
     },
   };

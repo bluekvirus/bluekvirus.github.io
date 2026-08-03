@@ -252,6 +252,53 @@ test('a hurt member rejoins the advance once its fallback window expires', () =>
     `a member still at hp=5 did not resume advancing once its fallback window expired (${before.toFixed(1)}m -> ${after.toFixed(1)}m)`);
 });
 
+test('intermittent ineligibility does not reset the fallback window', () => {
+  const { plan, mission, world, squad } = build('fallback-intermittent');
+  const target = plan.cells.find((c) => c.id !== mission.entryId).id;
+  const clearObjective = objectiveFor(plan, target, 'clear');
+  const extractObjective = { kind: 'extract', cellId: mission.entryId, point: mission.spawns.extraction };
+
+  const hurt = world.agents.find((a) => a.role === 'swat');
+
+  // One tick in every hundred flips the objective to 'extract' — briefly
+  // ineligible for fallback, per the Critical fix — and the rest stay
+  // 'clear'. Never one uninterrupted eligible run anywhere near
+  // SQUAD.fallbackTicks long, but comfortably more than fallbackTicks worth
+  // of eligible ticks in total by the end (3960 of 4000). If an ineligible
+  // tick resets the countdown instead of merely pausing it, the member can
+  // never accumulate enough eligible ticks to spend its window and never
+  // resumes advancing, however long the run — which is exactly the bug:
+  // measured directly, it did not resume over 14,400 ticks under the broken
+  // version. `stillFallenBack` is captured at tick 3500 — only ~3465
+  // eligible ticks have elapsed by then (35 of the first 3500 were the
+  // ineligible blips), comfortably short of the 3600 the window needs, so
+  // the member must still be genuinely holding back at that checkpoint
+  // regardless of which version of the code is running; what distinguishes
+  // the fix is only what happens after.
+  let stillFallenBack;
+  for (let i = 0; i < 4000; i++) {
+    world.tick();
+    if (hurt.alive) hurt.hp = 5;
+    squad.update(world, i % 100 === 0 ? extractObjective : clearObjective);
+    if (i === 3500) stillFallenBack = Math.hypot(hurt.x - clearObjective.point.x, hurt.z - clearObjective.point.z);
+  }
+
+  // Settle on a stable, unambiguous 'clear' objective and confirm the member
+  // actually advances from the tick-3500 checkpoint — the observable proof
+  // the window was spent, not merely paused forever by the interruptions.
+  for (let i = 0; i < 1200; i++) {
+    world.tick();
+    if (hurt.alive) hurt.hp = 5;
+    squad.update(world, clearObjective);
+  }
+  const after = Math.hypot(hurt.x - clearObjective.point.x, hurt.z - clearObjective.point.z);
+
+  assert.ok(hurt.hp <= hurt.hpMax * SQUAD.fallbackHealth, 'test setup: member was not actually hurt');
+  assert.ok(stillFallenBack > 3, 'test setup: member was not actually holding back at the tick-3500 checkpoint');
+  assert.ok(after < stillFallenBack - 1,
+    `a member intermittently ineligible for fallback never spent its window and resumed advancing (${stillFallenBack.toFixed(1)}m -> ${after.toFixed(1)}m)`);
+});
+
 test('two members below the fallback threshold get distinct rear positions', () => {
   const { plan, mission, world, squad } = build('fallback-spread');
   const target = plan.cells.find((c) => c.id !== mission.entryId).id;
