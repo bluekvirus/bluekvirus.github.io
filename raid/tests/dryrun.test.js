@@ -509,10 +509,10 @@ test('director and squad replay bit-for-bit on the seed that used to freeze', ()
 // forward. squad.js has no arrival gate at all — it issues goals and never
 // waits on anyone. But "a casualty must not stall the mission" is a property,
 // not a mechanism, and it survives the rewrite: the squad's per-agent maps
-// (issued/pending/fallbackTicksLeft/fallbackSpent) are exactly the kind of
-// bookkeeping a dead member can be left stuck in, and the director's extract
-// arrival check reads `[...swat, hostage]` where a corpse that stayed in the
-// list could never satisfy it.
+// (issued/pending) are exactly the kind of bookkeeping a dead member can be
+// left stuck in, and the director's extract arrival check reads
+// `[...swat, hostage]` where a corpse that stayed in the list could never
+// satisfy it.
 //
 // Deliberately does not pin a win or a loss on this seed. From the casualty
 // onward the rest of the mission is a live, stochastic firefight, and pinning
@@ -552,11 +552,19 @@ test('a casualty does not stall the mission', () => {
 // exit and the hostage rooted where it was rescued, 26m away.
 //
 // Asserts the MECHANISM (did the hostage actually get escorted anywhere)
-// rather than the verdict, so it stays meaningful if a retune ever flips this
-// seed's firefight the other way. The setup assertion is load-bearing: if a
-// generator change ever makes this seed's extraction point walkable, this test
-// would quietly stop exercising the fallback at all, and it must say so rather
-// than keep passing for the wrong reason.
+// rather than the verdict, so a combat retune that flips this seed's firefight
+// the other way (success instead of failure, or vice versa) does not itself
+// break the test. But *reaching* the mechanism at all still depends on the
+// squad surviving the search phase on one fixed seed, and that is not
+// retune-proof: it is exactly what broke below. A combat change is free to
+// leave the verdict alone and still strand this test if it changes who lives
+// long enough to reach 'extract' — Tasks 2-5 of this plan are all combat
+// tasks, so this seed (or whatever seed replaces it next) should be treated
+// as a likely casualty of each of them, not a one-off. The setup assertion is
+// load-bearing for the other failure mode: if a generator change ever makes
+// this seed's extraction point walkable, this test would quietly stop
+// exercising the fallback at all, and it must say so rather than keep passing
+// for the wrong reason.
 //
 // Seed changed from `squad-int-4` at Task 1: removing SQUAD.fallbackHealth
 // (see squad.js and task-1-report.md) changes squad combat outcomes on every

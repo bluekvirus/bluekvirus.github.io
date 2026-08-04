@@ -1,9 +1,9 @@
 // Tactical execution.
 //
 // The director says WHERE the squad is going; this module decides how the
-// four of them get there — who leads, who holds, who pulls back. It issues
-// goals through world.setGoal and nothing else, so it needs no knowledge of
-// paths, steering, or combat resolution.
+// four of them get there — who leads, who holds. It issues goals through
+// world.setGoal and nothing else, so it needs no knowledge of paths,
+// steering, or combat resolution.
 //
 // Goals are re-issued only when they change. setGoal runs a full A* query and
 // resets an agent's stall bookkeeping, so calling it every tick would both
@@ -28,20 +28,6 @@ export const SQUAD = Object.freeze({
   reissueDistance: 1.5,
 });
 
-// A prior revision pulled a badly hurt member back from the advance below a
-// health threshold (`fallbackHealth`), bounded to one 3600-tick window per
-// member. Measured directly against its own absence over two independent
-// 300-mission seed families (rooms 8-12): it cost 8-10 points of extraction
-// rate (42.7% -> 51.7% and 44.3% -> 54.0%), produced 35-79% more squad wipes,
-// and made missions run 21-29% longer — with zero timeouts either way, so
-// none of that cost was ever recovered as fewer hangs. Its own stated purpose
-// ("the others keep going, and it rejoins once it is no longer the most
-// exposed") was never built: there is no rejoin condition, only the fixed
-// timer, and a hurt member pulling itself out of the fight is not neutral —
-// it is one fewer gun on the firefight that is actually killing the squad.
-// Removed rather than kept and retuned; see task-1-report.md for the full
-// measurement.
-
 /** Even spread around a shared point, by fixed slot — never random. */
 const slotPoint = (point, slot, total) => {
   const angle = (slot / Math.max(1, total)) * Math.PI * 2;
@@ -61,6 +47,25 @@ const slotPoint = (point, slot, total) => {
 // why a blocked point is a permanent, silent setGoal failure rather than a
 // recoverable one.
 
+// A prior revision pulled a badly hurt member back from the advance below a
+// health threshold (`fallbackHealth`), bounded to one 3600-tick window per
+// member. Removed after review confirmed it on a stronger comparison than
+// the ablation this module's own measurement used: a paired same-seed
+// comparison of the two committed states over 900 seeds (three fresh
+// 300-mission families) found a McNemar χ² of 19.1 (p ≈ 1e-5) — 107 seeds
+// that lost with the rule present won without it, against only 51 the other
+// way. The naive extraction-rate delta was noisier and family-dependent
+// (+8.0 / +6.0 / +4.7 points across those three families, one individually
+// only p ≈ 0.08; two families measured separately during this change's own
+// development ran hotter, +9.0 / +9.7) — the paired result is the one worth
+// trusting. Squad wipes and mission length both improved alongside it, with
+// zero timeouts in every configuration, so none of the rule's cost was ever
+// recovered as fewer hangs. Its own stated purpose ("the others keep going,
+// and it rejoins once it is no longer the most exposed") was never built:
+// there is no rejoin condition, only the fixed timer, and a hurt member
+// pulling itself out of the fight is not neutral — it is one fewer gun on
+// the firefight that is actually killing the squad. See task-1-report.md for
+// the full measurement.
 export function createSquad(plan) {
   // Last goal actually issued per agent — the intended `want` (for deciding
   // whether it has moved enough to be worth a fresh query) alongside the
