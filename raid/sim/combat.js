@@ -84,11 +84,24 @@ const accuracyOf = (a) => {
 
 /**
  * How much of an attacker's hit chance this target evades. Zero for everyone
- * except a melee agent that is currently closing — a stationary melee agent
- * is no harder to hit than anyone else, and a gun agent never evades at all.
+ * except a melee agent that is actually SPRINTING right now — a stationary
+ * melee agent (patrolling, or holding at strike range mid-swing) is no harder
+ * to hit than anyone else, and a gun agent never evades at all.
+ *
+ * Gated on `target.sprinting`, not `target.chasing`: `chasing` spans the
+ * WHOLE engagement window, from the moment a target closes to within
+ * chargeRange until the moment it dies or the target escapes back past it —
+ * including the back half of that window, once the charger has arrived at
+ * COMBAT.meleeRange * 0.75 and world.js's own hold branch has it standing
+ * still, swinging (see the `dist < COMBAT.meleeRange * 0.75` branch there).
+ * Gating this on `chasing` measured 67.6% of a chasing melee agent's evaded
+ * shots landing during that stationary hold, not the approach it was
+ * specified for — `sprinting` is `chasing` minus that back half. See
+ * `sprinting`'s own computation in `createCombat`'s step() for how the two
+ * are kept in agreement with world.js's hold threshold tick-for-tick.
  */
 export function evasionOf(target) {
-  if (!target || target.weapon !== 'melee' || !target.chasing) return 0;
+  if (!target || target.weapon !== 'melee' || !target.sprinting) return 0;
   return COMBAT.meleeEvasion;
 }
 
@@ -117,12 +130,21 @@ export const damageOf = (a) => (a.weapon === 'melee' ? COMBAT.meleeDamage : COMB
 export const rangeOf = (a) => (a.weapon === 'melee' ? COMBAT.meleeRange : COMBAT.gunRange);
 export const cooldownOf = (a) => (a.weapon === 'melee' ? COMBAT.meleeCooldown : COMBAT.gunCooldown);
 
-// `runSpeed`/`walkSpeed` mirror `SIM.runSpeed`/`SIM.walkSpeed` in world.js.
-// combat.js cannot import world.js (that cycle would fail to resolve — see
-// the header comment above), so the caller passes the numbers in instead;
-// the defaults here exist only so a test harness that omits them still gets
-// production-accurate speeds rather than `undefined`.
-export function createCombat({ grid, agents, rng, isDoorOpen, step, runSpeed = 3.2, walkSpeed = 1.4 }) {
+// `walkSpeed` mirrors `SIM.walkSpeed` in world.js. combat.js cannot import
+// world.js (that cycle would fail to resolve — see the header comment above),
+// so the caller passes the number in instead; the default here exists only so
+// a test harness that omits it still gets a production-accurate speed rather
+// than `undefined`.
+//
+// There is deliberately no equivalent `runSpeed` parameter. A chasing melee
+// agent's speed is `COMBAT.meleeChargeSpeed` (read directly below, not
+// injected), not SWAT's run speed — the two used to be conflated here (this
+// wrote a passed-in `runSpeed` into a chasing agent's `wants` while world.js's
+// own movement math had already moved on to `COMBAT.meleeChargeSpeed`), which
+// left `wants` — nothing reads it for melee today, but its whole purpose is
+// "how fast is this agent going" — silently wrong for the entire back half of
+// every charge. See the note beside `a.wants`'s assignment below.
+export function createCombat({ grid, agents, rng, isDoorOpen, step, walkSpeed = 1.4 }) {
   const distance = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
   // `a.target` is an agent id, not an index into `agents` — the two only
@@ -170,6 +192,7 @@ export function createCombat({ grid, agents, rng, isDoorOpen, step, runSpeed = 3
     a.diedAt = tick;
     a.target = -1;
     a.chasing = false;
+    a.sprinting = false;
     a.path = null;
     a.goal = null;
     a.vx = 0;
@@ -205,7 +228,7 @@ export function createCombat({ grid, agents, rng, isDoorOpen, step, runSpeed = 3
         // true` at zero health for even one more tick, and means callers
         // (world.js) need no death-handling code of their own at all.
         if (a.alive && a.hp <= 0) kill(a, tick);
-        if (!a.alive || a.weapon === 'none') { a.target = -1; a.chasing = false; continue; }
+        if (!a.alive || a.weapon === 'none') { a.target = -1; a.chasing = false; a.sprinting = false; continue; }
 
         if (a.target >= 0 && !canTarget(a, byId.get(a.target))) a.target = -1;
         if (a.target < 0 && tick % COMBAT.scanInterval === a.id % COMBAT.scanInterval) {
@@ -220,20 +243,39 @@ export function createCombat({ grid, agents, rng, isDoorOpen, step, runSpeed = 3
         // Checked every tick (not just on acquisition), so a target that
         // walks back out past chargeRange calls off the charge just as
         // promptly as one that walks in starts it.
-        a.chasing = a.target >= 0 && a.weapon === 'melee'
-          && distance(a, byId.get(a.target)) <= COMBAT.chargeRange;
+        const chaseTarget = a.target >= 0 ? byId.get(a.target) : null;
+        a.chasing = !!chaseTarget && a.weapon === 'melee'
+          && distance(a, chaseTarget) <= COMBAT.chargeRange;
 
-        // A charging melee agent sprints; it drops back to its patrol speed
-        // (walkSpeed — what it spawned with, and what director.js's patrol
-        // wander never changes) the instant it stops chasing. Read every
-        // tick, not only on the chasing/not-chasing transition, for the same
-        // reason squad.js re-sets `wants` every tick for the members it
-        // commands: cheap, and correct even if something else ever
-        // touched `wants` in between. Only ever written here for a
+        // `chasing` alone spans the WHOLE engagement window, closing AND
+        // holding at strike range once arrived -- world.js's own hold branch
+        // (`dist < COMBAT.meleeRange * 0.75`) is what actually stops a
+        // charger's movement, and this mirrors that exact threshold using the
+        // same pre-movement positions world.js's movement step will apply
+        // this same tick (combat.step() runs before movement in world.js's
+        // tick() -- see the header comment there), so the two never disagree
+        // within a tick. `evasionOf` reads this, not `chasing`, so evasion
+        // covers only the actual sprint -- see its own doc comment for the
+        // measurement that found evasion was being credited to a stationary,
+        // swinging agent nearly 70% of the time before this split existed.
+        a.sprinting = a.chasing && distance(a, chaseTarget) >= COMBAT.meleeRange * 0.75;
+
+        // A charging melee agent sprints at COMBAT.meleeChargeSpeed; it drops
+        // back to its patrol speed (walkSpeed — what it spawned with, and what
+        // director.js's patrol wander never changes) the instant it stops
+        // chasing. This is informational only, not what actually drives
+        // movement (world.js's own speed calc reads `COMBAT.meleeChargeSpeed`
+        // directly for a chasing melee agent — see the comment there), but
+        // `wants` exists to answer "how fast is this agent going" for whoever
+        // reads it next, so it must not disagree with the number movement
+        // actually uses. Read every tick, not only on the chasing/not-chasing
+        // transition, for the same reason squad.js re-sets `wants` every tick
+        // for the members it commands: cheap, and correct even if something
+        // else ever touched `wants` in between. Only ever written here for a
         // `weapon === 'melee'` agent, and only SWAT carries a gun (roles.js
         // never gives one melee), so this can never race squad.js's own
         // `wants` writes, which are scoped to living SWAT members.
-        if (a.weapon === 'melee') a.wants = a.chasing ? runSpeed : walkSpeed;
+        if (a.weapon === 'melee') a.wants = a.chasing ? COMBAT.meleeChargeSpeed : walkSpeed;
 
         if (a.cooldown > 0) a.cooldown = Math.max(0, a.cooldown - step);
 

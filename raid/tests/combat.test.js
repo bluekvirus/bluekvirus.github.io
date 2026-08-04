@@ -14,12 +14,16 @@ import { SIM } from '../sim/world.js';
 // still assigned by original position (so callers keep indexing the returned
 // `agents` array by id), but the internal iteration order can be scrambled
 // independently, to prove nothing relies on array position matching id.
-// `speeds`, if given, overrides the runSpeed/walkSpeed createCombat wires a
-// melee agent's `a.wants` to while chasing/not chasing (see combat.js) --
-// deliberately distinct numbers from combat.js's own defaults (which mirror
-// SIM.runSpeed/SIM.walkSpeed) so a test asserting on them is proof the value
-// actually came from this call's wiring, not a coincidental match with
-// whatever combat.js falls back to on its own.
+// `speeds`, if given, overrides `walkSpeed`, the one speed createCombat still
+// takes as a constructor parameter (a melee agent's `a.wants` reads it while
+// NOT chasing -- see combat.js) -- deliberately distinct from combat.js's own
+// default (which mirrors SIM.walkSpeed) so a test asserting on it is proof the
+// value actually came from this call's wiring, not a coincidental match with
+// whatever combat.js falls back to on its own. There is no equivalent
+// `runSpeed` override: a chasing melee agent's speed is `COMBAT.meleeChargeSpeed`,
+// read directly rather than injected (see combat.js), so it cannot be
+// overridden per-test and every assertion on it below checks that fixed
+// constant instead of a test-local stand-in.
 const scene = (agents, placements = [], order, speeds) => {
   const plan = {
     seed: 'combat', config: { wallThickness: 0.1 },
@@ -31,7 +35,7 @@ const scene = (agents, placements = [], order, speeds) => {
   const full = agents.map((a, i) => ({
     id: i, role: a.role, weapon: a.weapon ?? 'gun',
     x: a.x, z: a.z, vx: 0, vz: 0, speed: 0, facing: 0,
-    hp: a.hp ?? 100, alive: a.alive ?? true, target: -1, chasing: false,
+    hp: a.hp ?? 100, alive: a.alive ?? true, target: -1, chasing: false, sprinting: false,
     cooldown: 0, firedAt: -1, hitAt: -1, diedAt: -1, captive: a.captive ?? false,
     goal: null, path: null, pathIndex: 0, wants: 0,
   }));
@@ -318,12 +322,12 @@ test('a target beyond chargeRange is acquired and held but not yet chased', () =
     'still not chasing once the target closed inside chargeRange');
 });
 
-test('a chasing melee agent sprints; a merely-holding one walks', () => {
-  const RUN = 5, WALK = 2; // distinct from combat.js's own SIM-mirroring defaults
+test('a chasing melee agent sprints at COMBAT.meleeChargeSpeed; a merely-holding one walks', () => {
+  const WALK = 2; // distinct from combat.js's own SIM-mirroring default
   const { agents, combat } = scene([
     { role: 'hostile', x: 2, z: 2, weapon: 'melee' },
     { role: 'swat', x: 2 + (COMBAT.chargeRange + 2), z: 2, weapon: 'none', hp: COMBAT.swatHp },
-  ], [], undefined, { runSpeed: RUN, walkSpeed: WALK });
+  ], [], undefined, { walkSpeed: WALK });
 
   for (let t = 0; t < COMBAT.scanInterval; t++) combat.step(t);
   assert.equal(agents[0].target, 1, 'setup failed to acquire the target');
@@ -331,42 +335,93 @@ test('a chasing melee agent sprints; a merely-holding one walks', () => {
   assert.equal(agents[0].wants, WALK,
     'a melee agent holding a distant target (not yet chasing) should move at its patrol (walk) speed');
 
-  // Bring the target inside chargeRange and let the gate open.
+  // Bring the target inside chargeRange (but still outside the hold
+  // threshold, meleeRange * 0.75 = 0.9m) and let the gate open.
   agents[1].x = 2 + (COMBAT.chargeRange - 0.5);
   combat.step(COMBAT.scanInterval + 1);
   assert.equal(agents[0].chasing, true, 'setup failed to enter the chasing state');
-  assert.equal(agents[0].wants, RUN,
-    'a chasing melee agent should move at the sprint (run) speed, not its patrol speed');
+  assert.equal(agents[0].sprinting, true,
+    'still well outside the meleeRange * 0.75 hold threshold -- should be sprinting');
+  // COMBAT.meleeChargeSpeed, not an injected value: there is no constructor
+  // override for a chasing melee agent's speed (see combat.js/scene()'s doc
+  // comment) -- world.js's own movement math reads this same COMBAT constant
+  // directly for a chasing melee agent, and `wants` must agree with it rather
+  // than naming a different number nothing actually moves at.
+  assert.equal(agents[0].wants, COMBAT.meleeChargeSpeed,
+    'a chasing melee agent should move at COMBAT.meleeChargeSpeed, not its patrol speed');
 
   // And back off out of chargeRange: the sprint should drop away again, not
   // stick from whatever it was on the previous tick.
   agents[1].x = 2 + (COMBAT.chargeRange + 2);
   combat.step(COMBAT.scanInterval + 2);
   assert.equal(agents[0].chasing, false, 'target retreated out of chargeRange but chasing stayed true');
+  assert.equal(agents[0].sprinting, false, 'stopped chasing but sprinting stayed true');
   assert.equal(agents[0].wants, WALK,
     'a melee agent that stopped chasing should drop back to its patrol (walk) speed, not keep sprinting');
 });
 
-test("createCombat's default runSpeed/walkSpeed still match SIM", () => {
-  // combat.js cannot import world.js (the cycle would fail to resolve — see
-  // its header comment) so it hardcodes runSpeed=3.2/walkSpeed=1.4 as
-  // fallback defaults and documents them as mirroring SIM.runSpeed/
-  // SIM.walkSpeed. Nothing enforces that the two stay in sync — a future
-  // change to either SIM constant with nobody remembering to update the
-  // other default would silently ship a melee sprint speed that no longer
-  // matches world.js's own SWAT run speed, with every other test in this
-  // file passing (they all supply explicit `speeds`, which never exercises
-  // combat.js's own fallback). This test is the one place that calls
-  // `scene()` with no `speeds` override, so it is the one place that would
-  // catch that drift.
+// Task 2 review: `chasing` alone stays true for the WHOLE engagement window,
+// closing and holding both, and evasion was found gated on it directly --
+// measured, over 200 missions, 67.6% of a chasing melee agent's evaded shots
+// landing while it stood still at strike range, not while it was actually
+// closing. `sprinting` exists to split that window; this proves the split
+// itself happens at the right distance, in the real step() loop (not just in
+// the evasionOf mocks above), and that `chasing` survives the hold instead of
+// being cleared by it -- movement (world.js) and combat targeting both still
+// need `chasing` true for the whole engagement, only evasion narrows to the
+// sprint.
+test('a melee agent stops sprinting (but keeps chasing) once it holds at strike range', () => {
   const { agents, combat } = scene([
     { role: 'hostile', x: 2, z: 2, weapon: 'melee' },
     { role: 'swat', x: 2 + (COMBAT.chargeRange - 0.5), z: 2, weapon: 'none', hp: COMBAT.swatHp },
   ]);
   for (let t = 0; t < COMBAT.scanInterval; t++) combat.step(t);
   assert.equal(agents[0].chasing, true, 'setup failed to enter the chasing state');
-  assert.equal(agents[0].wants, SIM.runSpeed,
-    "combat.js's default runSpeed no longer matches SIM.runSpeed");
+  assert.equal(agents[0].sprinting, true, 'setup failed to be sprinting while still closing');
+
+  // Move the target to just outside the hold threshold (meleeRange * 0.75):
+  // still sprinting.
+  agents[1].x = 2 + (COMBAT.meleeRange * 0.75 + 0.05);
+  combat.step(COMBAT.scanInterval + 1);
+  assert.equal(agents[0].chasing, true, 'still within chargeRange -- should still be chasing');
+  assert.equal(agents[0].sprinting, true,
+    'just outside the hold threshold -- should still be sprinting');
+
+  // Move the target inside the hold threshold: world.js would now have this
+  // agent standing still, swinging (see the `dist < COMBAT.meleeRange * 0.75`
+  // branch there) -- chasing must stay true (movement/targeting still treat
+  // this as an active charge) but sprinting must drop, since evasionOf must
+  // not credit a stationary target.
+  agents[1].x = 2 + (COMBAT.meleeRange * 0.75 - 0.05);
+  combat.step(COMBAT.scanInterval + 2);
+  assert.equal(agents[0].chasing, true,
+    'inside the hold threshold but still within chargeRange -- chasing should stay true');
+  assert.equal(agents[0].sprinting, false,
+    'inside the hold threshold -- should have stopped sprinting even though still chasing');
+});
+
+test("createCombat's default walkSpeed still matches SIM", () => {
+  // combat.js cannot import world.js (the cycle would fail to resolve — see
+  // its header comment) so it hardcodes walkSpeed=1.4 as a fallback default
+  // and documents it as mirroring SIM.walkSpeed. Nothing enforces that the
+  // two stay in sync — a future change to SIM.walkSpeed with nobody
+  // remembering to update the other default would silently ship a melee
+  // patrol speed that no longer matches world.js's own, with every other test
+  // in this file passing (they all supply explicit `speeds`, which never
+  // exercises combat.js's own fallback). This test is the one place that
+  // calls `scene()` with no `speeds` override, so it is the one place that
+  // would catch that drift. There is no equivalent `runSpeed` default to
+  // check: a chasing melee agent's speed is `COMBAT.meleeChargeSpeed`, a
+  // frozen constant read directly rather than injected, so it cannot drift
+  // from a constructor default that no longer exists.
+  const { agents, combat } = scene([
+    { role: 'hostile', x: 2, z: 2, weapon: 'melee' },
+    { role: 'swat', x: 2 + (COMBAT.chargeRange - 0.5), z: 2, weapon: 'none', hp: COMBAT.swatHp },
+  ]);
+  for (let t = 0; t < COMBAT.scanInterval; t++) combat.step(t);
+  assert.equal(agents[0].chasing, true, 'setup failed to enter the chasing state');
+  assert.equal(agents[0].wants, COMBAT.meleeChargeSpeed,
+    "a chasing melee agent's wants no longer matches COMBAT.meleeChargeSpeed");
 
   agents[1].x = 2 + (COMBAT.chargeRange + 2);
   combat.step(COMBAT.scanInterval + 1);
@@ -375,9 +430,14 @@ test("createCombat's default runSpeed/walkSpeed still match SIM", () => {
     "combat.js's default walkSpeed no longer matches SIM.walkSpeed");
 });
 
+// `sprinting`, not `chasing`, is what `evasionOf` actually reads (see its doc
+// comment): `chasing` spans the whole engagement window, including the
+// stationary hold at strike range, and evasion is specified for the sprint
+// only. These mocks set `sprinting` directly to exercise `evasionOf`/
+// `hitChance` in isolation, without needing a real target to compute it from.
 test('a sprinting melee agent is harder to hit than a standing one', () => {
-  const charging = { role: 'hostile', weapon: 'melee', chasing: true };
-  const standing = { role: 'hostile', weapon: 'melee', chasing: false };
+  const charging = { role: 'hostile', weapon: 'melee', sprinting: true };
+  const standing = { role: 'hostile', weapon: 'melee', sprinting: false };
   const shooter = { role: 'swat', weapon: 'gun' };
 
   const vsCharging = hitChance(shooter, 5, charging);
@@ -389,18 +449,23 @@ test('a sprinting melee agent is harder to hit than a standing one', () => {
     'evasion should scale the hit chance by exactly (1 - meleeEvasion)');
 });
 
-test('only a charging melee agent evades', () => {
-  assert.equal(evasionOf({ role: 'hostile', weapon: 'melee', chasing: true }), COMBAT.meleeEvasion);
-  assert.equal(evasionOf({ role: 'hostile', weapon: 'melee', chasing: false }), 0);
-  assert.equal(evasionOf({ role: 'hostile', weapon: 'gun', chasing: true }), 0);
-  assert.equal(evasionOf({ role: 'swat', weapon: 'gun', chasing: false }), 0);
+test('only an actually-sprinting melee agent evades', () => {
+  assert.equal(evasionOf({ role: 'hostile', weapon: 'melee', sprinting: true }), COMBAT.meleeEvasion);
+  assert.equal(evasionOf({ role: 'hostile', weapon: 'melee', sprinting: false }), 0);
+  assert.equal(evasionOf({ role: 'hostile', weapon: 'gun', sprinting: true }), 0);
+  assert.equal(evasionOf({ role: 'swat', weapon: 'gun', sprinting: false }), 0);
+  // `chasing: true` alone (the whole engagement window, including the
+  // stationary hold at strike range -- see combat.js) must NOT be enough on
+  // its own; only `sprinting` gates evasion.
+  assert.equal(evasionOf({ role: 'hostile', weapon: 'melee', chasing: true, sprinting: false }), 0,
+    'a melee agent holding at strike range (chasing but not sprinting) should not evade');
 });
 
 test('hit chance can never go negative or exceed one', () => {
   // hitChance is exported, so an out-of-domain caller must still get a
   // probability. gunRange is 10; the falloff term goes negative past 2x that.
   const shooter = { role: 'swat', weapon: 'gun' };
-  const plain = { role: 'hostile', weapon: 'gun', chasing: false };
+  const plain = { role: 'hostile', weapon: 'gun', sprinting: false };
   assert.ok(hitChance(shooter, 100, plain) >= 0, 'a very distant shot returned a negative probability');
   assert.ok(hitChance(shooter, 0, plain) <= 1, 'a point-blank shot exceeded certainty');
 });

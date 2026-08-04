@@ -142,3 +142,73 @@ test('the director is deterministic', () => {
   assert.equal(a.world.hash(), b.world.hash());
   assert.equal(a.director.phase, b.director.phase);
 });
+
+// Regression, migrated from dryrun.test.js at Task 2 review.
+//
+// `nextRoom` deliberately never returns the cell the squad is already
+// standing in (see search.js). The director marks a cell visited only once a
+// member has come within RESCUE_SIGHT (4m) of its CENTRE, and room diagonals
+// run far past that. Those two rules combined can let the search declare
+// itself exhausted while the squad is standing INSIDE the one remaining
+// unsearched cell, just not close enough to its centre yet: `nextRoom`
+// correctly reports "nowhere else to go" (it never offers `from`), and the
+// naive reading of that — "every cell is visited" — is wrong, because the
+// cell the squad occupies was never actually checked off. The fix at
+// director.js:239 (`if (state.targetCell === -1 && !state.visited.has(from))
+// state.targetCell = from;`) re-targets that cell instead of concluding the
+// search is over.
+//
+// First caught on seed `widestall-11-14` at tick 2186 (see git history for
+// the incident) and guarded there for a while, but a fixed seed only
+// exercises this by the accident of its floorplan and combat outcome. A
+// Task-2 combat retune produced a replacement seed that LOOKED right (a squad
+// member sat in the last unvisited cell, off-centre, for over a hundred
+// ticks) but never actually forced `nextRoom` to return -1 while `from` was
+// unvisited, so deleting line 239 left that seed's mission byte-identical —
+// an unguarded regression test that read as green. Two combat tasks in a row
+// stranding the same fixed-seed test, and Tasks 3-5 are all combat tasks too,
+// is what moved this here: hand-building the exact state the exhaustion
+// branch needs is immune to every future retune, because it never runs a
+// fight at all.
+test('the search re-targets its own cell when it is the only one left unvisited', () => {
+  const { plan, mission, world, director } = build('search-exhaustion', 10);
+  const hostage = world.agents.find((a) => a.role === 'hostage');
+
+  // Any cell other than the hostage's own room: placing the squad in the
+  // hostage's room would trip the `seen` (RESCUE_SIGHT-to-the-hostage) branch
+  // ahead of the exhaustion check this test targets, and this test needs
+  // that check to NOT fire so the exhaustion path is the one under test.
+  const cell = plan.cells.find((c) => c.id !== mission.hostageRoomId);
+  assert.ok(cell, 'test setup: this plan has no cell other than the hostage room');
+
+  // Every SWAT member stands well inside `cell`, near a corner rather than
+  // its centre — inside the room (so it is genuinely "the cell the squad
+  // occupies"), but far enough from the centre that `markVisited` has NOT
+  // already marked it (director.js's RESCUE_SIGHT gate) when `update` runs.
+  // That gap between "standing in it" and "seen into it" is exactly what
+  // director.js:239 exists to close.
+  const centre = { x: cell.x + cell.w / 2, z: cell.z + cell.d / 2 };
+  const px = cell.x + 0.5;
+  const pz = cell.z + 0.5;
+  const distToCentre = Math.hypot(px - centre.x, pz - centre.z);
+  assert.ok(distToCentre > 4,
+    `test setup: (${px}, ${pz}) is only ${distToCentre.toFixed(2)}m from cell ${cell.id}'s centre, needs to clear RESCUE_SIGHT (4m)`);
+  const distToHostage = Math.hypot(px - hostage.x, pz - hostage.z);
+  assert.ok(distToHostage >= 4,
+    'test setup: the synthetic squad position is within RESCUE_SIGHT of the hostage');
+
+  for (const a of world.agents.filter((x) => x.role === 'swat')) { a.x = px; a.z = pz; }
+
+  // Every OTHER cell is already "searched" — `cell` (the one the squad is
+  // standing in) is the sole exception. `director.visited` is a live Set
+  // reference, not a copy, so mutating it here reaches into the director's
+  // real state exactly as if the squad had genuinely swept everywhere else.
+  for (const c of plan.cells) if (c.id !== cell.id) director.visited.add(c.id);
+
+  director.update(world);
+
+  assert.equal(director.phase, 'search',
+    'the director gave up and switched to extract with an unsearched cell still under its feet');
+  assert.equal(director.objective.cellId, cell.id,
+    `the director should re-target its own cell (${cell.id}) rather than decide the search is over (got cellId ${director.objective.cellId})`);
+});

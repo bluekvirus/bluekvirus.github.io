@@ -153,6 +153,7 @@ export function createWorld(plan, mission, placements = []) {
       alive: true,
       target: -1,
       chasing: false,
+      sprinting: false,
       cooldown: 0,
       firedAt: -1,
       hitAt: -1,
@@ -183,7 +184,7 @@ export function createWorld(plan, mission, placements = []) {
 
   const combat = createCombat({
     grid, agents, rng, isDoorOpen, step: SIM.step,
-    runSpeed: SIM.runSpeed, walkSpeed: SIM.walkSpeed,
+    walkSpeed: SIM.walkSpeed,
   });
 
   world.setGoal = (id, point) => {

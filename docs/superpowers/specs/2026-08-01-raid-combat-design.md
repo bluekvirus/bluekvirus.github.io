@@ -183,6 +183,7 @@ gunCooldown    0.8 s        meleeCooldown  1.1 s
 gunDamage      25           meleeDamage    35
 swatHp         75           hostileHp      80        hostageHp  40
 swatAccuracy   0.80         hostileAccuracy 0.70     meleeAccuracy 0.75
+meleeHp        160          meleeEvasion   0.35      meleeChargeSpeed 4.0 m/s
 ```
 
 (Measured and moved during Task 10's tuning pass — see that task's ledger and
@@ -198,9 +199,27 @@ strictly better melee engagement rate through `hostileAccuracy` instead —
 see the melee report for the paired-seed numbers). The values above are
 what shipped, not the ones originally written here.)
 
-Gun hit chance is `accuracy * (1 - 0.5 * distance / gunRange)`, so a shot at
-the edge of range lands half as often as one at point-blank. Melee uses
-`meleeAccuracy` flat — at 1.2m there is no falloff worth modelling.
+`meleeHp`, `meleeEvasion`, and `meleeChargeSpeed` were added by the phase D-B
+combat-systems plan's Task 2 (see that plan's `task-2-brief.md`/
+`task-2-report.md`), on top of the melee follow-up task's `chargeRange`: a
+melee hostile must cross open ground under four rifles to do its job, which a
+gun hostile never has to, and these three constants are what make that
+crossing survivable often enough to matter. All three are starting points,
+not yet tuned — a later task in that plan retunes them once the rest of that
+plan's combat changes are in place.
+
+Gun hit chance is `accuracy * (1 - 0.5 * distance / gunRange) * (1 -
+evasion)`, clamped to `[0, 1]`; melee omits the range falloff (flat
+`meleeAccuracy` — at 1.2m there is no falloff worth modelling) but is subject
+to the same evasion factor and clamp. `evasion` is zero for everyone except a
+melee hostile that is actually SPRINTING right now (still closing the
+distance, strictly between `chargeRange` and the point-blank hold where it
+stops to swing) — worth `meleeEvasion` there and nowhere else, including a
+gun target and a melee hostile that has already arrived and is holding at
+strike range. The clamp exists because this is an exported function callable
+with any distance directly, not only through a live simulation tick: the gun
+falloff term goes negative past twice `gunRange`, a distance the simulation
+itself never reaches but a direct caller can pass.
 
 The hostage is deliberately frail: it is an unarmoured civilian being walked
 through a firefight, and a failure condition nobody can ever trigger is not a
@@ -230,6 +249,24 @@ during the melee follow-up task from the original 0.80 vs 0.75, moving
 band once melee chargers became effective; see `melee-report.md`), not raw
 durability, which the sweep shows needs to run the other way for either side
 to lose often enough to matter.
+
+The phase D-B combat-systems plan's Task 2 widens this inversion further for
+the two melee hostiles specifically, and this disclosure would understate it
+if left as "four": at `meleeHp 160`, a melee hostile now takes **seven** gun
+hits to kill, not four — nearly SWAT's own toughness twice over. This is
+deliberate for the same reason `hostileHp 80` is: a melee hostile has to
+survive crossing open ground under four rifles to ever land a swing at all,
+which a gun hostile never has to do, so it needs disproportionately more
+raw durability to be a real threat rather than a decoration — see that
+task's brief and report for the reasoning and the measured engagement/
+failure-rate trade this bought. `meleeEvasion` (0.35, applied only while a
+melee hostile is actually sprinting, not once it arrives and holds at strike
+range — see the hit-chance note above) works the same lever again, further
+still: SWAT's accuracy edge buys nothing against a target that is not there
+to be hit at all for the fraction of a fight it is sprinting. As with
+`hostileHp` itself, the numbers above are starting points for that task, not
+yet tuned; a later task in that plan retunes all three once the rest of that
+plan's combat changes are in place.
 
 ### Mission outcome
 

@@ -552,31 +552,26 @@ test('a casualty does not stall the mission', () => {
 // exit and the hostage rooted where it was rescued, 26m away.
 //
 // Asserts the MECHANISM (did the hostage actually get escorted anywhere)
-// rather than the verdict, so a combat retune that flips this seed's firefight
-// the other way (success instead of failure, or vice versa) does not itself
-// break the test. But *reaching* the mechanism at all still depends on the
-// squad surviving the search phase on one fixed seed, and that is not
-// retune-proof: it is exactly what broke below. A combat change is free to
-// leave the verdict alone and still strand this test if it changes who lives
-// long enough to reach 'extract' — Tasks 2-5 of this plan are all combat
-// tasks, so this seed (or whatever seed replaces it next) should be treated
-// as a likely casualty of each of them, not a one-off. The setup assertion is
-// load-bearing for the other failure mode: if a generator change ever makes
-// this seed's extraction point walkable, this test would quietly stop
-// exercising the fallback at all, and it must say so rather than keep passing
-// for the wrong reason.
+// rather than the verdict, so this test only ever cared whether the escort
+// itself works, not whether the squad happens to win whatever fight this
+// seed's hostiles pick a fight with along the way. It was stranded twice
+// regardless — Task 1's fallback-rule removal, then this task's melee
+// changes — each time because *reaching* 'extract' at all depended on the
+// squad surviving combat on one fixed seed, and neither change touched the
+// escort mechanism this test exists to guard.
 //
-// Seed changed from `squad-int-4` at Task 1: removing SQUAD.fallbackHealth
-// (see squad.js and task-1-report.md) changes squad combat outcomes on every
-// seed, and `squad-int-4` no longer reaches 'extract' at all under the new
-// squad.js — the squad is wiped in the search phase first, a real and
-// unrelated behaviour change, not a bug in this test's own assertions (the
-// `director.phase !== 'extract'` check below still failed loudly rather than
-// passing for the wrong reason). `blocked-exit-12-116` was found by sweeping
-// fresh seeds for one whose extraction point is still blocked AND that still
-// reaches a successful extraction under the post-removal squad.
+// Fixed at Task 2 review by removing that dependency rather than re-seeding
+// around it a second time (see the `hostage-escort` test below, and
+// director.test.js's search-exhaustion test, for the same call): every
+// hostile is killed immediately after the world is built, so the squad's
+// search is uncontested and reaching 'extract' depends only on real search/
+// pathing behaviour, never on a combat retune. `blocked-exit-12-116` is kept
+// as the seed rather than swept again — its extraction point being blocked is
+// a floorplan-generation property, entirely unrelated to combat, so nothing
+// about this fix required a new seed.
 test('the hostage is escorted out even when the extraction point is not itself walkable', () => {
   const { mission, world, director, squad } = build('blocked-exit-12-116', 12);
+  for (const h of world.agents.filter((a) => a.role === 'hostile')) { h.hp = 0; h.alive = false; }
   const exit = mission.spawns.extraction;
   const exitCell = world.grid.worldToCell(exit.x, exit.z);
   assert.ok(world.grid.isBlocked(exitCell.col, exitCell.row),
@@ -601,50 +596,26 @@ test('the hostage is escorted out even when the extraction point is not itself w
     `the hostage was never routed anywhere: ${startGap.toFixed(1)}m from the exit at the rescue, ${endGap.toFixed(1)}m at the end`);
 });
 
-// Regression, found while migrating the anti-hang tests at the cutover.
+// Regression, found while migrating the anti-hang tests at the cutover, and
+// formerly covered HERE against a fixed seed (`widestall-11-14`, then
+// `widestall-11-16`).
 //
-// `nextRoom` deliberately never returns the cell the squad is already standing
-// in (see search.js). The director marks a cell visited only once a member has
-// come within RESCUE_SIGHT (4m) of its CENTRE, and room diagonals run 12-22m.
-// Those two rules combined let the search declare itself exhausted while the
-// lead was inside the ONE remaining unsearched cell — the original incident
-// (seed `widestall-11-14`) hit this at tick 2186, with the only unvisited cell
-// both the hostage's room and the cell the lead was standing in, 6.15m from
-// its centre. The director switched to 'extract' with `hostageReached` still
-// false, the squad walked back to the exit, the hostage was never stood up,
-// and the mission burned the entire 9600-tick clock to a `timeout` with the
-// hostage sitting 34m away. The fix (see `state.targetCell === -1 &&
-// !state.visited.has(from)` in director.js) is general, not seed-specific.
+// Retired as a seed-bound test at Task 2 review: a fixed seed reproduces
+// director.js:239's specific geometry — the sole remaining unvisited cell IS
+// the one the squad is already standing in, more than RESCUE_SIGHT from its
+// centre — only by coincidence of that seed's floorplan and combat outcome,
+// and a Task-2 review caught a replacement seed (`widestall-11-16`) that
+// LOOKED right (a member sat in the last unvisited cell, off-centre, for 184
+// ticks) but never actually exercised the line it was meant to guard: deleting
+// line 239 left that seed's mission byte-identical. Every combat task in this
+// plan (2-5) retunes outcomes on every seed, so re-seeding this test each time
+// it breaks was chasing a moving target rather than fixing it.
 //
-// `hostageReached`, not the verdict, is the assertion that names the defect:
-// "did the search actually finish" is the question, and a win/loss on a live
-// firefight is not.
-//
-// Seed changed from `widestall-11-14` at Task 2: buffing melee hostiles
-// (meleeHp, meleeEvasion, meleeChargeSpeed — see combat.js) changes combat
-// outcomes on every seed, and `widestall-11-14` no longer survives to
-// `hostageReached` under the new numbers — the squad is wiped (0 of 4 SWAT
-// alive) at tick 2610 with only 11 of 13 cells swept, well before the search
-// nears completion. That is a real and unrelated behaviour change (the squad
-// lost a firefight, not the search giving up), not a bug in this test's own
-// assertion, so per the equivalent swap in the escort test above, the fix is
-// to re-seed rather than weaken the check.
-//
-// `widestall-11-16` was found by sweeping the same seed family for one that
-// both reproduces the scenario and survives the post-Task-2 balance: a squad
-// member is inside cell 1 (the hostage's own room, and the only cell left
-// unvisited) from tick 2397, 6.16m from its centre, for 184 straight ticks
-// before `hostageReached` finally flips true at tick 2581 — one SWAT casualty
-// along the way, but the search never gives up. The mission resolves
-// (`extracted`) at tick 3972 of the 12000-tick MISSION_LIMIT, a 3.02x margin,
-// so this is not living on the same knife-edge the original seed was.
-test('the search does not give up while the squad is standing in an unsearched room', () => {
-  const { plan, world, director, squad } = build('widestall-11-16', 11);
-  let ticks = 0;
-  while (director.result === null && ticks < MAX_TICKS) { step(world, director, squad); ticks++; }
-  assert.ok(director.hostageReached,
-    `the search ended without ever finding the hostage (${director.result}/${director.reason} at ${ticks} ticks, ${director.visited.size} of ${plan.cells.length} cells swept)`);
-});
+// The regression is now covered seed-independently, by hand-building the exact
+// state director.js:239 exists for rather than hoping a generated floorplan
+// produces it — see `director.test.js`'s
+// "the search re-targets its own cell when it is the only one left unvisited".
+// That test cannot be stranded by a combat retune: it never runs a fight.
 
 // Migrated from orders.test.js's "the hostage stays put until rescued" and
 // "the mission fails if the hostage is killed during the escort".
@@ -656,8 +627,16 @@ test('the search does not give up while the squad is standing in an unsearched r
 // takes as long as it takes, and the hostage legitimately starts moving the
 // moment it is rescued, so a fixed window that happened to span the transition
 // would be asserting the opposite of what it claims.
+//
+// This test is about the hostage's own captivity/movement bookkeeping and the
+// search/rescue/escort phase transitions, not about the squad surviving a
+// fight — so every hostile is killed immediately after the world is built,
+// exactly as in the blocked-exit test above, making the search uncontested and
+// this test immune to every combat retune in Tasks 2-5, the same way that one
+// now is.
 test('the hostage stays put until it is found, then stops being a captive', () => {
   const { world, director, squad } = build('hostage-escort', 10);
+  for (const a of world.agents.filter((x) => x.role === 'hostile')) { a.hp = 0; a.alive = false; }
   const h = world.agents.find((a) => a.role === 'hostage');
   const x0 = h.x;
   const z0 = h.z;
