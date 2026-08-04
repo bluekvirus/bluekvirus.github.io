@@ -536,9 +536,15 @@ export function createWorld(plan, mission, placements = []) {
       dirZ /= norm;
 
       // A charging melee agent sprints faster than anyone runs: the whole
-      // point is to spend less time in the open. Everyone else moves at the
-      // speed their orders set.
-      const speed = (a.chasing && a.weapon === 'melee') ? COMBAT.meleeChargeSpeed : a.wants;
+      // point is to spend less time in the open. `a.wants` already carries
+      // that number -- combat.js's step() (which runs before this, every
+      // tick -- see world.js's own tick() header comment) writes
+      // COMBAT.meleeChargeSpeed into a chasing melee agent's `wants` for
+      // exactly this reason (see the comment there), so there is no separate
+      // "is this agent charging" branch to duplicate here: `wants` is the
+      // single source of truth for what every agent's orders say to move at,
+      // melee charge included.
+      const speed = a.wants;
       const nx = a.x + dirX * speed * SIM.step;
       const nz = a.z + dirZ * speed * SIM.step;
       const beforeX = a.x;

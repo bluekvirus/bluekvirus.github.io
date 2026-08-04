@@ -270,7 +270,7 @@ test('nobody shoots through a closed door', () => {
   const grid = buildNavGrid(plan, []);
   const mk = (id, role, x, z) => ({
     id, role, weapon: 'gun', x, z, vx: 0, vz: 0, speed: 0, facing: 0,
-    hp: 100, alive: true, target: -1, chasing: false, cooldown: 0,
+    hp: 100, alive: true, target: -1, chasing: false, sprinting: false, cooldown: 0,
     firedAt: -1, hitAt: -1, diedAt: -1, captive: false,
     goal: null, path: null, pathIndex: 0, wants: 0,
   });

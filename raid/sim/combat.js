@@ -57,9 +57,10 @@ export const COMBAT = Object.freeze({
   // a decoration. All three are starting points, tuned by measurement in the
   // final task of this plan.
   meleeHp: 160,
-  // Applied ONLY while chasing. Tying it to the sprint makes it "hard to hit a
-  // fast mover" rather than an arbitrary dodge stat, and confines it to exactly
-  // the exposure window it exists to fix.
+  // Applied ONLY while sprinting (see `evasionOf`/`a.sprinting`), not for the
+  // whole engagement window a charge spans. Tying it to the sprint makes it
+  // "hard to hit a fast mover" rather than an arbitrary dodge stat, and
+  // confines it to exactly the exposure window it exists to fix.
   meleeEvasion: 0.35,
   meleeChargeSpeed: 4.0,
   // Ticks between target scans for any one agent. Twelve agents each testing
@@ -251,30 +252,37 @@ export function createCombat({ grid, agents, rng, isDoorOpen, step, walkSpeed = 
         // holding at strike range once arrived -- world.js's own hold branch
         // (`dist < COMBAT.meleeRange * 0.75`) is what actually stops a
         // charger's movement, and this mirrors that exact threshold using the
-        // same pre-movement positions world.js's movement step will apply
-        // this same tick (combat.step() runs before movement in world.js's
-        // tick() -- see the header comment there), so the two never disagree
-        // within a tick. `evasionOf` reads this, not `chasing`, so evasion
-        // covers only the actual sprint -- see its own doc comment for the
-        // measurement that found evasion was being credited to a stationary,
-        // swinging agent nearly 70% of the time before this split existed.
+        // positions in place before this tick's movement, since combat.step()
+        // runs before movement in world.js's tick() (see the header comment
+        // there). That is NOT a structural guarantee that the two branches
+        // agree tick-for-tick: world.js's movement loop mutates positions in
+        // array order, so by the time a charger's own hold branch runs, its
+        // target has usually already taken this tick's step, and the distance
+        // this line sees can differ from what world.js's branch sees by up to
+        // one target-step (~2-5cm). Measured 0 disagreements over 52,831
+        // ticks, so it is empirically sound at these speeds and this
+        // threshold's margin, but that is a statistical fact about this
+        // configuration, not a proof. `evasionOf` reads this, not `chasing`,
+        // so evasion covers only the actual sprint -- see its own doc comment
+        // for the measurement that found evasion was being credited to a
+        // stationary, swinging agent nearly 70% of the time before this split
+        // existed.
         a.sprinting = a.chasing && distance(a, chaseTarget) >= COMBAT.meleeRange * 0.75;
 
         // A charging melee agent sprints at COMBAT.meleeChargeSpeed; it drops
         // back to its patrol speed (walkSpeed — what it spawned with, and what
         // director.js's patrol wander never changes) the instant it stops
-        // chasing. This is informational only, not what actually drives
-        // movement (world.js's own speed calc reads `COMBAT.meleeChargeSpeed`
-        // directly for a chasing melee agent — see the comment there), but
-        // `wants` exists to answer "how fast is this agent going" for whoever
-        // reads it next, so it must not disagree with the number movement
-        // actually uses. Read every tick, not only on the chasing/not-chasing
-        // transition, for the same reason squad.js re-sets `wants` every tick
-        // for the members it commands: cheap, and correct even if something
-        // else ever touched `wants` in between. Only ever written here for a
-        // `weapon === 'melee'` agent, and only SWAT carries a gun (roles.js
-        // never gives one melee), so this can never race squad.js's own
-        // `wants` writes, which are scoped to living SWAT members.
+        // chasing. This IS what actually drives movement: world.js's own
+        // speed calc reads `a.wants` directly (see the comment there), with
+        // no separate melee-charge special case of its own, so this is the
+        // one and only place a chasing melee agent's speed is decided. Read
+        // every tick, not only on the chasing/not-chasing transition, for the
+        // same reason squad.js re-sets `wants` every tick for the members it
+        // commands: cheap, and correct even if something else ever touched
+        // `wants` in between. Only ever written here for a `weapon ===
+        // 'melee'` agent, and only SWAT carries a gun (roles.js never gives
+        // one melee), so this can never race squad.js's own `wants` writes,
+        // which are scoped to living SWAT members.
         if (a.weapon === 'melee') a.wants = a.chasing ? COMBAT.meleeChargeSpeed : walkSpeed;
 
         if (a.cooldown > 0) a.cooldown = Math.max(0, a.cooldown - step);

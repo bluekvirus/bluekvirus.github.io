@@ -213,10 +213,11 @@ evasion)`, clamped to `[0, 1]`; melee omits the range falloff (flat
 `meleeAccuracy` — at 1.2m there is no falloff worth modelling) but is subject
 to the same evasion factor and clamp. `evasion` is zero for everyone except a
 melee hostile that is actually SPRINTING right now (still closing the
-distance, strictly between `chargeRange` and the point-blank hold where it
-stops to swing) — worth `meleeEvasion` there and nowhere else, including a
-gun target and a melee hostile that has already arrived and is holding at
-strike range. The clamp exists because this is an exported function callable
+distance, from `chargeRange` down to the point-blank hold where it stops to
+swing, inclusive at both ends — `<= chargeRange` and `>= meleeRange * 0.75`)
+— worth `meleeEvasion` there and nowhere else, including a gun target and a
+melee hostile that has already arrived and is holding at strike range. The
+clamp exists because this is an exported function callable
 with any distance directly, not only through a live simulation tick: the gun
 falloff term goes negative past twice `gunRange`, a distance the simulation
 itself never reaches but a direct caller can pass.
