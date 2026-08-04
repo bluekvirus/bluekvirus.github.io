@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { COMBAT, createCombat, isEnemy, hitChance } from '../sim/combat.js';
+import { COMBAT, createCombat, isEnemy, hitChance, evasionOf } from '../sim/combat.js';
 import { buildNavGrid } from '../sim/navgrid.js';
 import { makeRng } from '../rng.js';
 import { SIM } from '../sim/world.js';
@@ -373,4 +373,45 @@ test("createCombat's default runSpeed/walkSpeed still match SIM", () => {
   assert.equal(agents[0].chasing, false, 'setup failed to drop out of the chasing state');
   assert.equal(agents[0].wants, SIM.walkSpeed,
     "combat.js's default walkSpeed no longer matches SIM.walkSpeed");
+});
+
+test('a sprinting melee agent is harder to hit than a standing one', () => {
+  const charging = { role: 'hostile', weapon: 'melee', chasing: true };
+  const standing = { role: 'hostile', weapon: 'melee', chasing: false };
+  const shooter = { role: 'swat', weapon: 'gun' };
+
+  const vsCharging = hitChance(shooter, 5, charging);
+  const vsStanding = hitChance(shooter, 5, standing);
+
+  assert.ok(vsCharging < vsStanding,
+    `a charging target (${vsCharging}) should be harder to hit than a standing one (${vsStanding})`);
+  assert.ok(Math.abs(vsStanding * (1 - COMBAT.meleeEvasion) - vsCharging) < 1e-9,
+    'evasion should scale the hit chance by exactly (1 - meleeEvasion)');
+});
+
+test('only a charging melee agent evades', () => {
+  assert.equal(evasionOf({ role: 'hostile', weapon: 'melee', chasing: true }), COMBAT.meleeEvasion);
+  assert.equal(evasionOf({ role: 'hostile', weapon: 'melee', chasing: false }), 0);
+  assert.equal(evasionOf({ role: 'hostile', weapon: 'gun', chasing: true }), 0);
+  assert.equal(evasionOf({ role: 'swat', weapon: 'gun', chasing: false }), 0);
+});
+
+test('hit chance can never go negative or exceed one', () => {
+  // hitChance is exported, so an out-of-domain caller must still get a
+  // probability. gunRange is 10; the falloff term goes negative past 2x that.
+  const shooter = { role: 'swat', weapon: 'gun' };
+  const plain = { role: 'hostile', weapon: 'gun', chasing: false };
+  assert.ok(hitChance(shooter, 100, plain) >= 0, 'a very distant shot returned a negative probability');
+  assert.ok(hitChance(shooter, 0, plain) <= 1, 'a point-blank shot exceeded certainty');
+});
+
+test('a melee hostile carries more health than a gun hostile', () => {
+  // It has to cross open ground under fire to do its job; a gun hostile does not.
+  assert.ok(COMBAT.meleeHp > COMBAT.hostileHp,
+    `meleeHp ${COMBAT.meleeHp} should exceed hostileHp ${COMBAT.hostileHp}`);
+});
+
+test('a charging melee agent closes faster than it walks', () => {
+  assert.ok(COMBAT.meleeChargeSpeed > SIM.runSpeed,
+    `meleeChargeSpeed ${COMBAT.meleeChargeSpeed} should exceed runSpeed ${SIM.runSpeed}`);
 });

@@ -51,6 +51,17 @@ export const COMBAT = Object.freeze({
   // 0.75 -- see docs/superpowers/specs/2026-08-01-raid-combat-design.md).
   hostileAccuracy: 0.70,
   meleeAccuracy: 0.75,
+  // A melee hostile must cross open ground under four rifles to do its job,
+  // which a gun hostile never has to. These three constants exist to make that
+  // crossing survivable often enough for melee to be a real threat rather than
+  // a decoration. All three are starting points, tuned by measurement in the
+  // final task of this plan.
+  meleeHp: 160,
+  // Applied ONLY while chasing. Tying it to the sprint makes it "hard to hit a
+  // fast mover" rather than an arbitrary dodge stat, and confines it to exactly
+  // the exposure window it exists to fix.
+  meleeEvasion: 0.35,
+  meleeChargeSpeed: 4.0,
   // Ticks between target scans for any one agent. Twelve agents each testing
   // line of sight to eleven others every tick is 132 grid traversals per tick
   // against a 2ms budget; staggering by id divides that by six for at most
@@ -72,22 +83,34 @@ const accuracyOf = (a) => {
 };
 
 /**
+ * How much of an attacker's hit chance this target evades. Zero for everyone
+ * except a melee agent that is currently closing — a stationary melee agent
+ * is no harder to hit than anyone else, and a gun agent never evades at all.
+ */
+export function evasionOf(target) {
+  if (!target || target.weapon !== 'melee' || !target.chasing) return 0;
+  return COMBAT.meleeEvasion;
+}
+
+/**
  * Odds a single attack lands. A gun falls off linearly to half its accuracy at
  * maximum range, so distance is worth something without a shot ever becoming
  * impossible; melee is flat, because at 1.2m there is no falloff worth
- * modelling.
+ * modelling. A charging melee target then evades a portion of whatever that
+ * base chance was — see `evasionOf`.
  *
- * Clamped at 0: past 2*gunRange the linear falloff above goes negative.
- * step() never calls this beyond gunRange itself (the range gate in the loop
- * below precedes every call), so the clamp is unreachable from there — but
- * this is an exported function callable directly with any distance, and a
- * negative "probability" is a defect regardless of whether anything in this
- * module currently triggers it.
+ * Clamped: past 2*gunRange the linear falloff above goes negative. step()
+ * never calls this beyond gunRange itself (the range gate in the loop below
+ * precedes every call), so the clamp is unreachable from there — but this is
+ * an exported function callable directly with any distance, and an
+ * out-of-[0,1] "probability" is a defect regardless of whether anything in
+ * this module currently triggers it.
  */
-export function hitChance(a, distance) {
+export function hitChance(a, distance, target) {
   const base = accuracyOf(a);
-  if (a.weapon === 'melee') return base;
-  return Math.max(0, base * (1 - 0.5 * distance / COMBAT.gunRange));
+  const falloff = a.weapon === 'melee' ? 1 : (1 - 0.5 * distance / COMBAT.gunRange);
+  const chance = base * falloff * (1 - evasionOf(target));
+  return Math.min(1, Math.max(0, chance));
 }
 
 export const damageOf = (a) => (a.weapon === 'melee' ? COMBAT.meleeDamage : COMBAT.gunDamage);
@@ -163,7 +186,7 @@ export function createCombat({ grid, agents, rng, isDoorOpen, step, runSpeed = 3
     // project's own tie-break test in combat.test.js proves the two can
     // differ) — a replay is exact because that order is fixed, not because
     // it happens to match id.
-    if (rng.next() >= hitChance(a, d)) return;
+    if (rng.next() >= hitChance(a, d, b)) return;
     b.hp -= damageOf(a);
     b.hitAt = tick;
     if (b.hp <= 0) kill(b, tick);

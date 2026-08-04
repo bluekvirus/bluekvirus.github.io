@@ -144,8 +144,12 @@ export function createWorld(plan, mission, placements = []) {
       _yieldTicks: 0,
       _yieldTo: -1,
       weapon: spawn.weapon ?? (role === 'hostage' ? 'none' : 'gun'),
-      hp: role === 'swat' ? COMBAT.swatHp : role === 'hostage' ? COMBAT.hostageHp : COMBAT.hostileHp,
-      hpMax: role === 'swat' ? COMBAT.swatHp : role === 'hostage' ? COMBAT.hostageHp : COMBAT.hostileHp,
+      hp: role === 'swat' ? COMBAT.swatHp
+        : role === 'hostage' ? COMBAT.hostageHp
+        : (spawn.weapon === 'melee' ? COMBAT.meleeHp : COMBAT.hostileHp),
+      hpMax: role === 'swat' ? COMBAT.swatHp
+        : role === 'hostage' ? COMBAT.hostageHp
+        : (spawn.weapon === 'melee' ? COMBAT.meleeHp : COMBAT.hostileHp),
       alive: true,
       target: -1,
       chasing: false,
@@ -530,7 +534,10 @@ export function createWorld(plan, mission, placements = []) {
       dirX /= norm;
       dirZ /= norm;
 
-      const speed = a.wants;
+      // A charging melee agent sprints faster than anyone runs: the whole
+      // point is to spend less time in the open. Everyone else moves at the
+      // speed their orders set.
+      const speed = (a.chasing && a.weapon === 'melee') ? COMBAT.meleeChargeSpeed : a.wants;
       const nx = a.x + dirX * speed * SIM.step;
       const nz = a.z + dirZ * speed * SIM.step;
       const beforeX = a.x;

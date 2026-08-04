@@ -607,33 +607,39 @@ test('the hostage is escorted out even when the extraction point is not itself w
 // in (see search.js). The director marks a cell visited only once a member has
 // come within RESCUE_SIGHT (4m) of its CENTRE, and room diagonals run 12-22m.
 // Those two rules combined let the search declare itself exhausted while the
-// lead was inside the ONE remaining unsearched cell: on this seed, at tick
-// 2186, the only unvisited cell was 2 — which was both the hostage's room and
-// the cell the lead was standing in, 6.15m from its centre. The director
-// switched to 'extract' with `hostageReached` still false, the squad walked
-// back to the exit, the hostage was never stood up, and the mission burned the
-// entire 9600-tick clock to a `timeout` with the hostage sitting 34m away.
+// lead was inside the ONE remaining unsearched cell — the original incident
+// (seed `widestall-11-14`) hit this at tick 2186, with the only unvisited cell
+// both the hostage's room and the cell the lead was standing in, 6.15m from
+// its centre. The director switched to 'extract' with `hostageReached` still
+// false, the squad walked back to the exit, the hostage was never stood up,
+// and the mission burned the entire 9600-tick clock to a `timeout` with the
+// hostage sitting 34m away. The fix (see `state.targetCell === -1 &&
+// !state.visited.has(from)` in director.js) is general, not seed-specific.
 //
 // `hostageReached`, not the verdict, is the assertion that names the defect:
-// the squad had already swept 12 of 13 cells and was physically inside the
-// last one, so "did it actually finish searching" is the question, and a
-// win/loss on a live firefight is not.
+// "did the search actually finish" is the question, and a win/loss on a live
+// firefight is not.
 //
-// There is deliberately NO `reason !== 'timeout'` assertion here, though the
-// defect did manifest as a timeout. This seed remains the slowest mission
-// measured anywhere in phase D: at the cutover it resolved at 8757 of the
-// then-9600-tick clock, an 8.8% headroom that a ~10% slowdown anywhere in the
-// simulation would have erased. Task 5 re-measured this exact tail (a fresh
-// 2500-mission uncapped sweep did not exceed it) and raised MISSION_LIMIT
-// 9600 -> 12000 on the strength of that measurement (see the note on that
-// constant in director.js) — this seed now resolves at 8757 of 12000, a much
-// more comfortable 1.37x margin. `hostageReached` is set at tick 7017 on this
-// seed, 1.71x inside the now-12000 clock, so it remains the more robust
-// signal as well as the more specific one — it is not unconditionally immune,
-// but the margin behind both numbers is real now rather than a rounding
-// error away from a false timeout.
+// Seed changed from `widestall-11-14` at Task 2: buffing melee hostiles
+// (meleeHp, meleeEvasion, meleeChargeSpeed — see combat.js) changes combat
+// outcomes on every seed, and `widestall-11-14` no longer survives to
+// `hostageReached` under the new numbers — the squad is wiped (0 of 4 SWAT
+// alive) at tick 2610 with only 11 of 13 cells swept, well before the search
+// nears completion. That is a real and unrelated behaviour change (the squad
+// lost a firefight, not the search giving up), not a bug in this test's own
+// assertion, so per the equivalent swap in the escort test above, the fix is
+// to re-seed rather than weaken the check.
+//
+// `widestall-11-16` was found by sweeping the same seed family for one that
+// both reproduces the scenario and survives the post-Task-2 balance: a squad
+// member is inside cell 1 (the hostage's own room, and the only cell left
+// unvisited) from tick 2397, 6.16m from its centre, for 184 straight ticks
+// before `hostageReached` finally flips true at tick 2581 — one SWAT casualty
+// along the way, but the search never gives up. The mission resolves
+// (`extracted`) at tick 3972 of the 12000-tick MISSION_LIMIT, a 3.02x margin,
+// so this is not living on the same knife-edge the original seed was.
 test('the search does not give up while the squad is standing in an unsearched room', () => {
-  const { plan, world, director, squad } = build('widestall-11-14', 11);
+  const { plan, world, director, squad } = build('widestall-11-16', 11);
   let ticks = 0;
   while (director.result === null && ticks < MAX_TICKS) { step(world, director, squad); ticks++; }
   assert.ok(director.hostageReached,
