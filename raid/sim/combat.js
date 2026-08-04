@@ -63,19 +63,20 @@ export const COMBAT = Object.freeze({
   // confines it to exactly the exposure window it exists to fix.
   meleeEvasion: 0.35,
   meleeChargeSpeed: 4.0,
-  // Ten rounds, not thirty. Measured (Task 3 review round, 300 missions):
-  // SWAT fire an average of 9.75 shots each per mission, not "roughly a
-  // dozen" as an earlier draft of this comment claimed — a conventional
-  // magazine (30) would never empty and reload would be dead code, the same
-  // failure as phase C's meleeDamage and sightRange, both of which shipped
-  // inert and were reverted. Note what 9.75 actually implies: it sits just
-  // BELOW magazineSize (10), not comfortably above it, which is exactly why
-  // reload fires in only ~66-69% of missions rather than nearly all of
-  // them — most SWAT members' demand never even reaches the threshold, and
-  // only above-average encounters push a member past it. This constant is
-  // closer to the edge of being inert than the original comment suggested;
-  // see task-3-report.md's Step 6 measurement before assuming it is sized
-  // comfortably.
+  // Ten rounds, not thirty. Measured (Task 3, multiple independent sweeps —
+  // 300 missions x2 plus a 2000-mission run — converge tightly): SWAT fire
+  // an average of roughly 8.4-8.8 shots each per mission, point estimate
+  // about 8.5, not "roughly a dozen" as an earlier draft of this comment
+  // claimed — a conventional magazine (30) would never empty and reload
+  // would be dead code, the same failure as phase C's meleeDamage and
+  // sightRange, both of which shipped inert and were reverted. Note what
+  // ~8.5 actually implies: it sits BELOW magazineSize (10), not comfortably
+  // below it, which is exactly why reload fires in only ~66-69% of missions
+  // rather than nearly all of them — most SWAT members' demand never even
+  // reaches the threshold, and only above-average encounters push a member
+  // past it. This constant is closer to the edge of being inert than the
+  // original comment suggested; see task-3-report.md's Step 6 measurement
+  // before assuming it is sized comfortably.
   // A finite count of SPARE magazines is deliberately not modelled: no
   // plausible number could ever be exhausted, so the count and the
   // out-of-ammo fallback it would gate are unreachable before they are written.
