@@ -63,10 +63,19 @@ export const COMBAT = Object.freeze({
   // confines it to exactly the exposure window it exists to fix.
   meleeEvasion: 0.35,
   meleeChargeSpeed: 4.0,
-  // Ten rounds, not thirty. SWAT fire roughly a dozen shots each per mission
-  // now that clearing has doubled contacts, so a conventional magazine would
-  // never empty and reload would be dead code — the same failure as phase C's
-  // meleeDamage and sightRange, both of which shipped inert and were reverted.
+  // Ten rounds, not thirty. Measured (Task 3 review round, 300 missions):
+  // SWAT fire an average of 9.75 shots each per mission, not "roughly a
+  // dozen" as an earlier draft of this comment claimed — a conventional
+  // magazine (30) would never empty and reload would be dead code, the same
+  // failure as phase C's meleeDamage and sightRange, both of which shipped
+  // inert and were reverted. Note what 9.75 actually implies: it sits just
+  // BELOW magazineSize (10), not comfortably above it, which is exactly why
+  // reload fires in only ~66-69% of missions rather than nearly all of
+  // them — most SWAT members' demand never even reaches the threshold, and
+  // only above-average encounters push a member past it. This constant is
+  // closer to the edge of being inert than the original comment suggested;
+  // see task-3-report.md's Step 6 measurement before assuming it is sized
+  // comfortably.
   // A finite count of SPARE magazines is deliberately not modelled: no
   // plausible number could ever be exhausted, so the count and the
   // out-of-ammo fallback it would gate are unreachable before they are written.
@@ -305,6 +314,17 @@ export function createCombat({ grid, agents, rng, isDoorOpen, step, walkSpeed = 
         // this an agent could refill AND fire again in that same tick, since
         // reloadTime (1.8s) comfortably outlasts gunCooldown (0.8s) and
         // cooldown has long since expired by the time ammo refills.
+        //
+        // Net cost: the tick an empty magazine is discovered is ALSO consumed
+        // (the "empty magazine starts one" branch below `continue`s too), so
+        // the full shot-to-shot gap across a reload is 1 (discovery) + 108
+        // (round(reloadTime / step), the blocked window) + 1 (refill) = 110
+        // ticks of no fire, then the ordinary cooldown-gated fire opportunity
+        // the tick after that — 111 ticks measured last-shot-to-next-shot,
+        // two ticks more than reloadTime's own 109-tick (1.8s * 60Hz + 1)
+        // reading. Deliberate and internally consistent, but tune against the
+        // measured 111, not the nominal 109, or Task 6 will be sizing a
+        // number that isn't the one actually governing mission play.
         if (a.reloadUntil >= tick) continue;
         if (a.reloadUntil >= 0 && a.reloadUntil < tick) {
           a.reloadUntil = -1;

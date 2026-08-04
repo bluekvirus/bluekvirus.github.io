@@ -273,6 +273,11 @@ test('nobody shoots through a closed door', () => {
     id, role, weapon: 'gun', x, z, vx: 0, vz: 0, speed: 0, facing: 0,
     hp: 100, alive: true, target: -1, chasing: false, sprinting: false, cooldown: 0,
     firedAt: -1, hitAt: -1, diedAt: -1, captive: false,
+    // Both required now that combat.js reads/writes them for every gun
+    // agent: omitting them here would silently opt this fixture's agents out
+    // of the ammo system (ammo stuck at NaN, forever unable to reach 0, so
+    // never reloading) rather than exercising it.
+    ammo: COMBAT.magazineSize, reloadUntil: -1,
     goal: null, path: null, pathIndex: 0, wants: 0,
   });
   const agents = [mk(0, 'swat', 3, 3), mk(1, 'hostile', 9, 3)];
@@ -524,7 +529,7 @@ test('a reloading agent cannot fire', () => {
 
   const hpAtReloadStart = target.hp;
   const firedAtReloadStart = shooter.firedAt;
-  while (tick < shooter.reloadUntil) combat.step(tick++);
+  while (tick < 6000 && tick < shooter.reloadUntil) combat.step(tick++);
 
   assert.equal(shooter.firedAt, firedAtReloadStart, 'fired while reloading');
   assert.equal(target.hp, hpAtReloadStart, 'dealt damage while reloading');
@@ -540,7 +545,7 @@ test('a reload refills the magazine exactly once', () => {
   const shooter = agents[0];
   let tick = 0;
   while (tick < 6000 && shooter.reloadUntil <= tick) combat.step(tick++);
-  while (tick <= shooter.reloadUntil) combat.step(tick++);
+  while (tick < 6000 && tick <= shooter.reloadUntil) combat.step(tick++);
   combat.step(tick++);
   assert.equal(shooter.ammo, COMBAT.magazineSize,
     `magazine holds ${shooter.ammo} after a reload, expected ${COMBAT.magazineSize}`);
@@ -549,11 +554,34 @@ test('a reload refills the magazine exactly once', () => {
 test('a melee agent has no ammunition and never reloads', () => {
   // Ammo is a gun concept. A melee agent that could be blocked by an empty
   // magazine would silently stop attacking with no visible cause.
+  //
+  // The melee agent also needs hp high enough to survive the full window:
+  // with the test-default 100 it dies to the swat's return fire in well
+  // under 3000 ticks, after which reloadUntil trivially stays -1 forever
+  // (a corpse attempts nothing) and the swing count trivially stalls too --
+  // neither observation would say anything about ammo/reload at that point.
   const { agents, combat } = scene([
-    { role: 'hostile', x: 2, z: 2, weapon: 'melee' },
+    { role: 'hostile', x: 2, z: 2, weapon: 'melee', hp: 100000 },
     { role: 'swat', x: 2.5, z: 2, hp: 100000 },
   ]);
-  for (let t = 0; t < 3000; t++) combat.step(t);
-  assert.equal(agents[0].reloadUntil, -1, 'a melee agent entered a reload');
+  let swings = 0;
+  let lastFiredAt = agents[0].firedAt;
+  for (let t = 0; t < 3000; t++) {
+    combat.step(t);
+    // Sampled every tick, not once at the end: reloadUntil is reset to -1 by
+    // the very branch that completes a reload, so an agent that spent a
+    // material fraction of this run reloading would still read -1 at t=2999
+    // -- only a continuous sample can catch it actually going non--1 at any
+    // point in between.
+    assert.equal(agents[0].reloadUntil, -1, `a melee agent entered a reload at tick ${t}`);
+    if (agents[0].firedAt !== lastFiredAt) { swings++; lastFiredAt = agents[0].firedAt; }
+  }
+  // A floor, not "any damage at all": meleeCooldown (1.1s) is a 66-tick
+  // cadence at this step, so 3000 ticks of uninterrupted swinging land
+  // floor(3000/66)+1 = 46 swings. A magazine-gated melee agent measurably
+  // loses swings to reload stalls (46 -> 43 when both ammo guards are
+  // removed, in this exact scenario) while still landing at least one hit,
+  // which "hp < 100000" alone cannot distinguish from full health cadence.
+  assert.ok(swings >= 44, `melee agent only swung ${swings} times in 3000 ticks (expected ~46) — too few to rule out reload stalls`);
   assert.ok(agents[1].hp < 100000, 'the melee agent stopped attacking');
 });

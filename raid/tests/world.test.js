@@ -724,3 +724,19 @@ test('the replay hash covers ammunition', () => {
   assert.notEqual(a.hash(), b.hash(),
     'hash() ignores ammo — a diverging reload cycle would replay as identical');
 });
+
+test('the replay hash covers reloadUntil', () => {
+  // ammo alone cannot stand in for this: an agent can read ammo === 0 either
+  // while actively reloading or for the one tick before a fresh reload is
+  // armed, so two replays can agree on ammo while disagreeing on whether one
+  // of them is mid-reload -- a real, distinct piece of state that decides
+  // whether the agent can fire on the very next tick.
+  const a = build('hash-reload');
+  const b = build('hash-reload');
+  for (let i = 0; i < 300; i++) { a.tick(); b.tick(); }
+  assert.equal(a.hash(), b.hash());
+
+  a.agents[0].reloadUntil += 1;
+  assert.notEqual(a.hash(), b.hash(),
+    'hash() ignores reloadUntil — two replays could differ on whether an agent is mid-reload yet hash identically');
+});
