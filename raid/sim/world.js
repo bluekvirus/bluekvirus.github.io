@@ -20,6 +20,12 @@ export const SIM = Object.freeze({
   turnRate: 8,
   doorOpenTime: 0.4,
   doorReach: 0.9,
+  // Living agents cannot close within twice this. 0.25 is chosen against three
+  // existing distances, all asserted in world.test.js: it must stay under
+  // meleeRange*0.75 (0.90) so a charger can still reach its own strike
+  // distance, and under SIM.separation (0.75) so the soft steering force gets
+  // to resolve ordinary crowding before the hard constraint engages.
+  bodyRadius: 0.25,
 });
 
 const round = (v) => Math.round(v * 1e4) / 1e4;
@@ -239,6 +245,25 @@ export function createWorld(plan, mission, placements = []) {
   };
   const blockedAt = (x, z) => refusalAt(x, z).blocked;
 
+  // Which LIVING agent's body is (x, z) inside, if any? Corpses are excluded
+  // deliberately: a dead agent that blocked movement could seal a corridor
+  // with nothing able to clear it.
+  //
+  // Returns the blocker rather than a boolean because the tangent slide in
+  // tick() needs the contact normal, and returns the FIRST one found — that is
+  // the lowest id, which is stable and derived from nothing but ids, so a seed
+  // replays identically. With `bodyRadius` at 0 no distance can be under the
+  // minimum, so this returns null for every query and the whole mechanism
+  // (this check and the tangent slide that depends on it) is inert.
+  const bodyBlocking = (self, x, z) => {
+    const min = SIM.bodyRadius * 2;
+    for (const other of agents) {
+      if (other === self || !other.alive) continue;
+      if (Math.hypot(x - other.x, z - other.z) < min) return other;
+    }
+    return null;
+  };
+
   // Re-path from wherever the agent actually is, keeping the first few steps
   // raw and smoothing everything past them.
   //
@@ -455,6 +480,7 @@ export function createWorld(plan, mission, placements = []) {
               // replays identically) is not.
               let rival = -1;
               let rivalDist = Infinity;
+              let rivalParked = false;
               for (const other of agents) {
                 if (other === a || !other.alive) continue;
                 // Only an agent that is ITSELF getting nowhere counts as a
@@ -464,11 +490,32 @@ export function createWorld(plan, mission, placements = []) {
                 // measured as a 2.2x slowdown on the one seed with a long
                 // escort down a corridor, where the hostage yielded to every
                 // squad member that drifted alongside it.
-                if (other._goalStrikes === 0) continue;
+                //
+                // "Getting nowhere" has a second shape the strike counter
+                // cannot report, and bodies made it reachable: an agent under
+                // no orders at all. It takes the no-path branch above every
+                // tick, which resets its bookkeeping, so `_goalStrikes` is
+                // pinned at 0 forever while it stands perfectly still — the
+                // captive hostage is permanently in this state, and so is any
+                // squad member between orders. It is not walking past; it is
+                // parked, and it is just as much in the way as a wall.
+                const parked = !other.goal && !other.path && !other.chasing;
+                if (other._goalStrikes === 0 && !parked) continue;
                 const d = Math.hypot(a.x - other.x, a.z - other.z);
-                if (d < SIM.separation && d < rivalDist) { rivalDist = d; rival = other.id; }
+                if (d < SIM.separation && d < rivalDist) {
+                  rivalDist = d; rival = other.id; rivalParked = parked;
+                }
               }
-              if (rival >= 0 && rival < a.id) {
+              // A parked rival takes right of way unconditionally. The id rule
+              // exists to break a symmetric contest between two agents that
+              // both want the same ground; there is nothing symmetric about a
+              // contest with an agent that wants nothing. It will never strike,
+              // never nudge and never give way, so if the mover does not go
+              // round it, nobody does — measured, a hostile pinned between the
+              // stationary hostage and a wall corner (seed dry-11-9) held
+              // position for 779 ticks waiting for a lower id that was never
+              // going to move.
+              if (rival >= 0 && (rivalParked || rival < a.id)) {
                 a._yieldTo = rival;
                 a._yieldTicks = YIELD_TICKS;
                 a._nudgeBias = 0;
@@ -565,9 +612,84 @@ export function createWorld(plan, mission, placements = []) {
       // closed door on the smoothed route — a door metres away on the same
       // segment as a genuine wall-corner jam is not what is stopping the
       // agent, and must not be reported, or mistaken, as such.
-      const primary = refusalAt(nx, nz);
-      const slideX = primary.blocked ? refusalAt(nx, a.z) : null;
-      const slideZ = (slideX && slideX.blocked) ? refusalAt(a.x, nz) : null;
+      // A body refuses a step the same way a wall does, so it slides the same
+      // way too. `doorId` stays -1 on a body refusal, which matters: the
+      // door-opening trigger and the stall classifier below both inspect
+      // these three refusals, and a body must not be mistaken for a shut door
+      // — that would try to open a door that is not there, and would reset
+      // the stall window on a genuine jam.
+      const refusalWithBodies = (x, z) => {
+        const r = refusalAt(x, z);
+        if (r.blocked) return r;
+        return bodyBlocking(a, x, z) ? { blocked: true, doorId: -1 } : r;
+      };
+
+      const primary = refusalWithBodies(nx, nz);
+      const slideX = primary.blocked ? refusalWithBodies(nx, a.z) : null;
+      const slideZ = (slideX && slideX.blocked) ? refusalWithBodies(a.x, nz) : null;
+
+      // A fourth fallback, and one a wall never needs: bodies are ROUND, and
+      // sliding along the world axes cannot get past a circle. At a contact
+      // whose normal is diagonal, BOTH axis slides still move the agent
+      // inward — measured on seed world-16, an agent walked into a stationary
+      // squadmate at 0.501m and never moved again for the rest of the
+      // mission. None of the recovery machinery can free it either: the
+      // sideways nudge is perpendicular to the GOAL, and the goal points
+      // straight through the body, so even at its 1.5 cap the resulting step
+      // is still ~44% inward and refused; and the right-of-way yield never
+      // engages, because a rival must itself be striking out (`_goalStrikes >
+      // 0`) and an idle agent standing on the route resets its bookkeeping
+      // every tick. Deadlock, permanent, and invisible to every stall signal
+      // except the strike counter it ratchets forever.
+      //
+      // So slide along the contact tangent: the desired direction with its
+      // component along the contact normal removed. That is the same idea as
+      // the axis slide — drop the blocked component, keep the rest — applied
+      // to the surface actually in the way. It is tried only when all three
+      // ordinary attempts failed AND a body is what refused the direct step,
+      // so a pure wall jam behaves exactly as it always did.
+      let slideT = null;
+      let tanX = 0;
+      let tanZ = 0;
+      if (slideZ && slideZ.blocked) {
+        const blocker = bodyBlocking(a, nx, nz);
+        if (blocker) {
+          // Normal points from the blocker to this agent, so removing the
+          // along-normal component of `dir` leaves pure tangential travel,
+          // already signed toward wherever the agent was trying to go.
+          const ox = a.x - blocker.x;
+          const oz = a.z - blocker.z;
+          const d = Math.hypot(ox, oz);
+          if (d > 1e-6) {
+            const nX = ox / d;
+            const nZ = oz / d;
+            const along = dirX * nX + dirZ * nZ;
+            let rawX = dirX - along * nX;
+            let rawZ = dirZ - along * nZ;
+            let len = Math.hypot(rawX, rawZ);
+            if (len <= 1e-6) {
+              // Dead-on: the agent is steering exactly through the middle of
+              // the body, so both tangents are equally good and the
+              // projection cannot choose. Pick one by id parity, the same
+              // stable, replay-safe tie-break the nudge uses. Doing nothing
+              // here instead is not neutral — it is the deadlock: two agents
+              // meeting head-on in the open both freeze, and the nudge cannot
+              // rescue them (perpendicular to a goal that points straight
+              // through the body, even its 1.5 cap still leaves a net inward
+              // step). One tangential step is enough to break the symmetry;
+              // from the next tick the projection above has a direction of
+              // its own and takes over.
+              const sign = a.id % 2 === 0 ? 1 : -1;
+              rawX = -nZ * sign;
+              rawZ = nX * sign;
+              len = 1;
+            }
+            tanX = (rawX / len) * speed * SIM.step;
+            tanZ = (rawZ / len) * speed * SIM.step;
+            slideT = refusalWithBodies(a.x + tanX, a.z + tanZ);
+          }
+        }
+      }
 
       // A shut door directly ahead starts opening once in reach, regardless
       // of whether this particular step actually moves the agent. Tying
@@ -577,16 +699,17 @@ export function createWorld(plan, mission, placements = []) {
       // never fully stopping, so the door would never be told to open at
       // all and nobody would ever get through.
       //
-      // Checked across all three refusals this step considered (the direct
-      // step, and both sliding fallbacks), not just the direct one. A step
-      // refused head-on by a WALL while a slide axis is refused by a closed
-      // door is exactly the shape that used to disarm this trigger: `primary`
-      // reported the wall, so its doorId was -1 and the door behind the slide
-      // was never told to open, even though the agent was standing right next
-      // to it. That left only the slower 90-tick goal-stall path to recover.
-      // Using the same three refusals the classification below inspects
-      // keeps this consistent with what actually stopped the agent.
-      for (const r of [primary, slideX, slideZ]) {
+      // Checked across every refusal this step considered (the direct step,
+      // both sliding fallbacks, and the tangent slide), not just the direct
+      // one. A step refused head-on by a WALL while a slide axis is refused
+      // by a closed door is exactly the shape that used to disarm this
+      // trigger: `primary` reported the wall, so its doorId was -1 and the
+      // door behind the slide was never told to open, even though the agent
+      // was standing right next to it. That left only the slower 90-tick
+      // goal-stall path to recover. Using the same refusals the
+      // classification below inspects keeps this consistent with what
+      // actually stopped the agent.
+      for (const r of [primary, slideX, slideZ, slideT]) {
         if (r && r.doorId >= 0) {
           const door = doors[r.doorId];
           if (door.state === 'closed' && Math.hypot(door.x - a.x, door.z - a.z) < SIM.doorReach) {
@@ -598,10 +721,11 @@ export function createWorld(plan, mission, placements = []) {
       if (!primary.blocked) { a.x = nx; a.z = nz; }
       else if (!slideX.blocked) { a.x = nx; }
       else if (!slideZ.blocked) { a.z = nz; }
+      else if (slideT && !slideT.blocked) { a.x += tanX; a.z += tanZ; }
 
       const moved = Math.hypot(a.x - beforeX, a.z - beforeZ);
       const refusedByDoor = moved < 1e-9
-        ? [primary, slideX, slideZ].find((r) => r && r.doorId >= 0)
+        ? [primary, slideX, slideZ, slideT].find((r) => r && r.doorId >= 0)
         : undefined;
 
       if (refusedByDoor) {

@@ -740,3 +740,143 @@ test('the replay hash covers reloadUntil', () => {
   assert.notEqual(a.hash(), b.hash(),
     'hash() ignores reloadUntil — two replays could differ on whether an agent is mid-reload yet hash identically');
 });
+
+test('the body radius sits inside every distance that depends on it', () => {
+  // Three orderings, all load-bearing, all cheap to assert and expensive to
+  // discover by debugging:
+  //   2*bodyRadius < meleeRange*0.75  -- where a charger actually stops. If
+  //     collision blocked before that point, chargers would freeze just
+  //     outside their own strike distance and melee would break SILENTLY,
+  //     since they would still look like they were closing.
+  //   2*bodyRadius < separation       -- soft steering resolves crowding
+  //     before the hard constraint ever engages.
+  assert.ok(SIM.bodyRadius * 2 < COMBAT.meleeRange * 0.75,
+    `bodies (${SIM.bodyRadius * 2}m apart) block before a charger's stop distance (${COMBAT.meleeRange * 0.75}m)`);
+  assert.ok(SIM.bodyRadius * 2 < SIM.separation,
+    `hard collision (${SIM.bodyRadius * 2}m) engages before soft separation (${SIM.separation}m)`);
+});
+
+test('two living agents never overlap', () => {
+  for (const seed of SEEDS.slice(0, 20)) {
+    const w = build(seed);
+    const hostage = w.agents.find((a) => a.role === 'hostage');
+    for (const a of w.agents) w.setGoal(a.id, { x: hostage.x, z: hostage.z });
+    for (let i = 0; i < 1800; i++) {
+      w.tick();
+      const live = w.agents.filter((a) => a.alive);
+      for (let x = 0; x < live.length; x++) {
+        for (let y = x + 1; y < live.length; y++) {
+          const gap = Math.hypot(live[x].x - live[y].x, live[x].z - live[y].z);
+          assert.ok(gap >= SIM.bodyRadius * 2 - 1e-6,
+            `${seed}: agents ${live[x].id} and ${live[y].id} overlapped at ${gap.toFixed(3)}m on tick ${i}`);
+        }
+      }
+    }
+  }
+});
+
+test('a corpse does not block the living', () => {
+  // Bodies do not pile up in doorways. Deliberate: a dead agent that blocked
+  // movement could seal a corridor with nothing able to clear it.
+  const w = openRoom([{ x: 5, z: 5 }, { x: 5.6, z: 5 }]);
+  const [walker, corpse] = w.agents;
+  corpse.hp = 0;
+  w.tick();
+  assert.equal(corpse.alive, false, 'the fixture did not actually kill it');
+
+  assert.ok(w.setGoal(walker.id, { x: 9, z: 5 }));
+  let closest = Infinity;
+  for (let i = 0; i < 900; i++) {
+    w.tick();
+    closest = Math.min(closest, Math.hypot(walker.x - corpse.x, walker.z - corpse.z));
+  }
+  assert.ok(walker.x > 7,
+    `the walker stopped at x=${walker.x.toFixed(2)} — a corpse blocked it`);
+  // Arriving is not enough on its own. The contact-tangent slide lets a
+  // walker go AROUND a body, so a corpse that collided would still let this
+  // walker reach x=9 — just via a detour, with the test none the wiser
+  // (verified by sabotage: dropping the `!other.alive` skip leaves the
+  // arrival check green). The route runs dead through the corpse, so passing
+  // inside its body radius is the thing that actually proves it is not solid.
+  assert.ok(closest < SIM.bodyRadius * 2,
+    `the walker never came closer than ${closest.toFixed(3)}m to the corpse — it steered around a body that should not exist`);
+});
+
+test('a melee charger can still reach striking distance', () => {
+  // The ordering test above proves the constants allow it; this proves the
+  // movement code actually delivers it.
+  const w = openRoom([{ x: 2, z: 5 }, { x: 9, z: 5 }], 16);
+  const [chaser, mark] = w.agents;
+  chaser.role = 'hostile'; chaser.weapon = 'melee';
+  mark.role = 'swat'; mark.weapon = 'none'; mark.hp = 100000;
+  chaser.chasing = true; chaser.target = mark.id;
+  let closest = Infinity;
+  for (let i = 0; i < 1800; i++) {
+    w.tick();
+    closest = Math.min(closest, Math.hypot(chaser.x - mark.x, chaser.z - mark.z));
+  }
+  assert.ok(closest <= COMBAT.meleeRange,
+    `the charger never got within melee range — closest ${closest.toFixed(2)}m vs ${COMBAT.meleeRange}m`);
+  // And specifically to the distance a charger actually stops at, which is
+  // what the ordering constraint above is sized against. `meleeRange` on its
+  // own is a weaker bar than the code guarantees, weak enough to miss the
+  // failure this test exists for: at bodyRadius 0.5 the charger halts a full
+  // metre out, unable to reach its own strike distance, and the meleeRange
+  // check is still satisfied (verified by sabotage).
+  assert.ok(closest <= COMBAT.meleeRange * 0.75 + 1e-9,
+    `the charger stopped ${closest.toFixed(3)}m out, short of its own strike distance of ${(COMBAT.meleeRange * 0.75).toFixed(3)}m`);
+});
+
+test('an agent walks around a stationary one standing on its route', () => {
+  // Bodies are round, and the axis slides that carry an agent past a wall
+  // corner cannot carry it past a circle: at a diagonal contact BOTH axis
+  // slides still move it inward, so it stops dead at touching distance. None
+  // of the recovery machinery can free it either — the nudge is perpendicular
+  // to the goal, and the goal points straight through the body. Measured on
+  // seed world-16 before the contact-tangent slide existed: a SWAT agent
+  // walked into an idle squadmate 30m from its goal and never moved again.
+  const w = openRoom([{ x: 2, z: 2 }, { x: 6, z: 6 }], 16);
+  const [walker, blocker] = w.agents;
+  const goal = { x: 10, z: 10 };
+  // The blocker is exactly on the straight line from the walker to its goal,
+  // so there is no way through that does not involve going round it.
+  const cross = (blocker.x - walker.x) * (goal.z - walker.z)
+    - (blocker.z - walker.z) * (goal.x - walker.x);
+  assert.equal(cross, 0, 'test setup: the blocker is not actually on the route');
+  assert.ok(w.setGoal(walker.id, goal));
+
+  for (let i = 0; i < 1800; i++) w.tick();
+  assert.ok(Math.hypot(blocker.x - 6, blocker.z - 6) < 1e-9,
+    'test setup: the blocker moved, so it was never an obstacle');
+  assert.ok(Math.hypot(walker.x - goal.x, walker.z - goal.z) < 1,
+    `the walker stopped ${Math.hypot(walker.x - goal.x, walker.z - goal.z).toFixed(2)}m short of its goal — it could not get round a body`);
+});
+
+test('right of way goes to a parked neighbour whatever the ids say', () => {
+  // The lowest-id rule breaks a symmetric contest between two agents that
+  // both want the same ground. An agent under no orders is not contesting
+  // anything: it takes the no-path branch every tick, which resets its stall
+  // bookkeeping, so `_goalStrikes` is pinned at 0 forever and it can neither
+  // strike, nudge, nor give way. The mover has to be the one to go round,
+  // even holding the lower id — measured, a hostile pinned between the
+  // stationary hostage and a wall corner held position for 779 ticks waiting
+  // for a higher id that was never going to move.
+  const w = openRoom([{ x: 5, z: 5 }, { x: 5.3, z: 5 }]);
+  const [mover, parked] = w.agents;
+  assert.ok(w.setGoal(mover.id, { x: 10, z: 10 }));
+  assert.equal(parked.goal, null, 'test setup: the parked agent was given orders');
+  assert.ok(mover.id < parked.id,
+    'test setup: the mover must hold the LOWER id, or the plain id rule would explain the yield');
+
+  let moverYieldedTo = -1;
+  let parkedEverYielded = false;
+  pin(w, 400, () => {
+    if (mover._yieldTicks > 0) moverYieldedTo = mover._yieldTo;
+    if (parked._yieldTicks > 0) parkedEverYielded = true;
+  });
+
+  assert.equal(moverYieldedTo, parked.id,
+    'the mover never gave way to the parked agent jammed against it');
+  assert.equal(parkedEverYielded, false,
+    'the parked agent yielded too — it has no orders to give up, and both sides retreating solves nothing');
+});
