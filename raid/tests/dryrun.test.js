@@ -547,9 +547,9 @@ test('a casualty does not stall the mission', () => {
 // `nearestWalkable`, so the squad always arrived; director.js escorted the
 // hostage with a raw `setGoal(hostage, exit)`, which on those plans could
 // never succeed even once. Measured before the fix: 7336 consecutive failed
-// setGoal calls on seed `rr-27` and 6735 on this one, each ending in a
-// `timeout` verdict with the squad parked correctly at the exit and the
-// hostage rooted where it was rescued, 26m away.
+// setGoal calls on seed `rr-27` and 6735 on the original seed this test used,
+// each ending in a `timeout` verdict with the squad parked correctly at the
+// exit and the hostage rooted where it was rescued, 26m away.
 //
 // Asserts the MECHANISM (did the hostage actually get escorted anywhere)
 // rather than the verdict, so it stays meaningful if a retune ever flips this
@@ -557,8 +557,18 @@ test('a casualty does not stall the mission', () => {
 // generator change ever makes this seed's extraction point walkable, this test
 // would quietly stop exercising the fallback at all, and it must say so rather
 // than keep passing for the wrong reason.
+//
+// Seed changed from `squad-int-4` at Task 1: removing SQUAD.fallbackHealth
+// (see squad.js and task-1-report.md) changes squad combat outcomes on every
+// seed, and `squad-int-4` no longer reaches 'extract' at all under the new
+// squad.js — the squad is wiped in the search phase first, a real and
+// unrelated behaviour change, not a bug in this test's own assertions (the
+// `director.phase !== 'extract'` check below still failed loudly rather than
+// passing for the wrong reason). `blocked-exit-12-116` was found by sweeping
+// fresh seeds for one whose extraction point is still blocked AND that still
+// reaches a successful extraction under the post-removal squad.
 test('the hostage is escorted out even when the extraction point is not itself walkable', () => {
-  const { mission, world, director, squad } = build('squad-int-4', 12);
+  const { mission, world, director, squad } = build('blocked-exit-12-116', 12);
   const exit = mission.spawns.extraction;
   const exitCell = world.grid.worldToCell(exit.x, exit.z);
   assert.ok(world.grid.isBlocked(exitCell.col, exitCell.row),
@@ -570,7 +580,7 @@ test('the hostage is escorted out even when the extraction point is not itself w
   assert.equal(director.phase, 'extract', 'the escort never began on this seed');
   assert.ok(director.hostageReached, 'reached extract without ever finding the hostage');
 
-  // Measured 26.45m at this point, closing to 0.51m by the end.
+  // Measured 26.25m at this point, closing to 0.59m by the end.
   const startGap = Math.hypot(hostage.x - exit.x, hostage.z - exit.z);
   assert.ok(startGap > 10, `test setup: the hostage was already ${startGap.toFixed(1)}m from the exit at the rescue`);
 

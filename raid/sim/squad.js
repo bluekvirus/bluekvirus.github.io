@@ -14,32 +14,11 @@ import { nearestWalkable } from './navgrid.js';
 import { SIM } from './world.js';
 
 export const SQUAD = Object.freeze({
-  // Below this fraction of starting health a member stops advancing and pulls
-  // back toward the rear. Not a retreat from the mission — the others keep
-  // going.
-  fallbackHealth: 0.35,
-  // Metres each member's destination sits off the shared point (objective OR
-  // the fallback rear anchor — see below), so four agents never share one
-  // coordinate. Sharing a coordinate is what let goal-pull and separation-push
-  // cancel exactly in phase B, freezing an agent that could not tell it was
-  // making no progress.
+  // Metres each member's destination sits off the shared objective point, so
+  // four agents never share one coordinate. Sharing a coordinate is what let
+  // goal-pull and separation-push cancel exactly in phase B, freezing an
+  // agent that could not tell it was making no progress.
   spread: 1.1,
-  // Metres behind the objective direction that a falling-back member holds.
-  fallbackDistance: 4.0,
-  // Ticks a member holds its fallback position before rejoining the advance
-  // regardless of hp. Nothing in this simulation heals — combat.js only ever
-  // subtracts from hp — so "hurt" is monotone: once a member crosses
-  // fallbackHealth it never becomes false again on its own, and a rejoin
-  // condition phrased as "no longer the most exposed" cannot be built
-  // honestly against a value that only ever goes down. Bounding the retreat
-  // in time instead — the same shape as world.js's tie-breaking nudge, a
-  // bounded impulse rather than a standing bias — is what stops one wounded
-  // member from being able to subtract itself from the advance for the rest
-  // of the mission. Sized off orders.js's own LEG_TIMEOUT precedent (3600
-  // ticks / 60 simulated seconds is that codebase's existing answer to "how
-  // long do we wait on one thing before moving on regardless"), not
-  // reverse-engineered from any test's tick count.
-  fallbackTicks: 3600,
   // Re-issue a member's goal when its intended destination has moved at least
   // this far. Small enough to track a changing objective, large enough that
   // ordinary jitter does not trigger an A* query every tick. Doubles as the
@@ -48,6 +27,20 @@ export const SQUAD = Object.freeze({
   // fresh A* query over" judgment call.
   reissueDistance: 1.5,
 });
+
+// A prior revision pulled a badly hurt member back from the advance below a
+// health threshold (`fallbackHealth`), bounded to one 3600-tick window per
+// member. Measured directly against its own absence over two independent
+// 300-mission seed families (rooms 8-12): it cost 8-10 points of extraction
+// rate (42.7% -> 51.7% and 44.3% -> 54.0%), produced 35-79% more squad wipes,
+// and made missions run 21-29% longer — with zero timeouts either way, so
+// none of that cost was ever recovered as fewer hangs. Its own stated purpose
+// ("the others keep going, and it rejoins once it is no longer the most
+// exposed") was never built: there is no rejoin condition, only the fixed
+// timer, and a hurt member pulling itself out of the fight is not neutral —
+// it is one fewer gun on the firefight that is actually killing the squad.
+// Removed rather than kept and retuned; see task-1-report.md for the full
+// measurement.
 
 /** Even spread around a shared point, by fixed slot — never random. */
 const slotPoint = (point, slot, total) => {
@@ -81,13 +74,6 @@ export function createSquad(plan) {
   // already-pending id updates the value without losing its place in queue
   // order (Map preserves insertion order across a re-set of an existing key).
   const pending = new Map();
-  // Ticks remaining in a member's current bounded fallback window (see
-  // SQUAD.fallbackTicks), and the set of members that have already used
-  // theirs up. A spent member never falls back again — there is no healing
-  // to make it eligible a second time in any sense that isn't already
-  // covered by "spend the same window twice."
-  const fallbackTicksLeft = new Map();
-  const fallbackSpent = new Set();
 
   return {
     update(world, objective) {
@@ -108,69 +94,8 @@ export function createSquad(plan) {
       const wants = objective.kind === 'clear' ? SIM.runSpeed : SIM.walkSpeed;
       for (const a of members) a.wants = wants;
 
-      // Centre of mass, used to place a falling-back member behind the group
-      // rather than at some absolute point that might be inside a wall.
-      let cx = 0;
-      let cz = 0;
-      for (const a of members) { cx += a.x; cz += a.z; }
-      cx /= members.length;
-      cz /= members.length;
-
       members.forEach((a, slot) => {
-        const belowThreshold = a.hp <= a.hpMax * SQUAD.fallbackHealth;
-        // Falling back is never appropriate while extracting: pulling away
-        // from the exit the whole squad (and the hostage) is converging on
-        // cannot ever resolve, it can only stall the arrival check
-        // director.js gates 'done' on forever. A member that has already
-        // spent its one bounded retreat is likewise permanently ineligible —
-        // see fallbackTicks above for why there is no second window to grant.
-        const eligible = belowThreshold && objective.kind !== 'extract' && !fallbackSpent.has(a.id);
-
-        let hurt;
-        if (!eligible) {
-          // Ineligible (healthy, extracting, or already spent) means "do not
-          // fall back right now" — it must NOT mean "forget how much of the
-          // window is already used." Deleting the countdown here handed a
-          // fresh, full SQUAD.fallbackTicks budget to any member ineligible
-          // for even a single tick, which for a member that dips in and out
-          // of eligibility (extract flips it off, a later phase flips it
-          // back on) never lets the countdown reach zero at all — the exact
-          // permanent-retreat bug this window exists to prevent, just
-          // reinstated under cover of "ineligible right now." Leaving the
-          // Map entry untouched here is what makes the countdown resume
-          // where it left off instead of restarting.
-          hurt = false;
-        } else {
-          const remaining = fallbackTicksLeft.get(a.id) ?? SQUAD.fallbackTicks;
-          if (remaining <= 0) {
-            fallbackSpent.add(a.id);
-            fallbackTicksLeft.delete(a.id);
-            hurt = false;
-          } else {
-            fallbackTicksLeft.set(a.id, remaining - 1);
-            hurt = true;
-          }
-        }
-
-        let want;
-        if (hurt) {
-          // Directly away from the objective, from the squad's centre.
-          const dx = cx - objective.point.x;
-          const dz = cz - objective.point.z;
-          const len = Math.hypot(dx, dz) || 1;
-          const anchor = {
-            x: cx + (dx / len) * SQUAD.fallbackDistance,
-            z: cz + (dz / len) * SQUAD.fallbackDistance,
-          };
-          // Same slot spread the advance uses, just around the rear anchor
-          // instead of the objective point — more than one member below the
-          // threshold at once must not collapse onto one identical rear
-          // coordinate any more than the advance may collapse onto one
-          // identical objective coordinate.
-          want = slotPoint(anchor, slot, members.length);
-        } else {
-          want = slotPoint(objective.point, slot, members.length);
-        }
+        const want = slotPoint(objective.point, slot, members.length);
 
         const last = issued.get(a.id);
         const moved = !last || Math.hypot(last.want.x - want.x, last.want.z - want.z) > SQUAD.reissueDistance;
@@ -212,10 +137,9 @@ export function createSquad(plan) {
         break;
       }
 
-      // A member that died still holds a stale entry in every one of these
-      // per-agent maps/sets; drop it from all of them so a respawn or an id
-      // reuse cannot inherit someone else's destination, retreat countdown,
-      // or spent-fallback status.
+      // A member that died still holds a stale entry in these per-agent maps;
+      // drop it from both so a respawn or an id reuse cannot inherit someone
+      // else's destination.
       for (const id of [...issued.keys()]) {
         const agent = world.agentById(id);
         if (!agent || !agent.alive) issued.delete(id);
@@ -223,14 +147,6 @@ export function createSquad(plan) {
       for (const id of [...pending.keys()]) {
         const agent = world.agentById(id);
         if (!agent || !agent.alive) pending.delete(id);
-      }
-      for (const id of [...fallbackTicksLeft.keys()]) {
-        const agent = world.agentById(id);
-        if (!agent || !agent.alive) fallbackTicksLeft.delete(id);
-      }
-      for (const id of [...fallbackSpent]) {
-        const agent = world.agentById(id);
-        if (!agent || !agent.alive) fallbackSpent.delete(id);
       }
     },
   };
