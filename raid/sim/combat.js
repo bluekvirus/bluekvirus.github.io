@@ -63,6 +63,15 @@ export const COMBAT = Object.freeze({
   // confines it to exactly the exposure window it exists to fix.
   meleeEvasion: 0.35,
   meleeChargeSpeed: 4.0,
+  // Ten rounds, not thirty. SWAT fire roughly a dozen shots each per mission
+  // now that clearing has doubled contacts, so a conventional magazine would
+  // never empty and reload would be dead code — the same failure as phase C's
+  // meleeDamage and sightRange, both of which shipped inert and were reverted.
+  // A finite count of SPARE magazines is deliberately not modelled: no
+  // plausible number could ever be exhausted, so the count and the
+  // out-of-ammo fallback it would gate are unreachable before they are written.
+  magazineSize: 10,
+  reloadTime: 1.8,
   // Ticks between target scans for any one agent. Twelve agents each testing
   // line of sight to eleven others every tick is 132 grid traversals per tick
   // against a 2ms budget; staggering by id divides that by six for at most
@@ -205,6 +214,7 @@ export function createCombat({ grid, agents, rng, isDoorOpen, step, walkSpeed = 
   const attack = (a, b, d, tick) => {
     a.cooldown = cooldownOf(a);
     a.firedAt = tick;
+    if (a.weapon === 'gun') a.ammo -= 1;
     // One roll per attack, drawn in the fixed order `agents` is iterated in
     // step() below (array order, not necessarily agent-id order — this
     // project's own tie-break test in combat.test.js proves the two can
@@ -286,6 +296,27 @@ export function createCombat({ grid, agents, rng, isDoorOpen, step, walkSpeed = 
         if (a.weapon === 'melee') a.wants = a.chasing ? COMBAT.meleeChargeSpeed : walkSpeed;
 
         if (a.cooldown > 0) a.cooldown = Math.max(0, a.cooldown - step);
+
+        // A reload in progress blocks firing but not movement or targeting.
+        // Inclusive: the tick numerically equal to reloadUntil is still
+        // blocked, and the refill below fires strictly after it — so the
+        // tick the reload finishes is consumed by finishing it, the same way
+        // the tick a reload starts (below) is consumed by starting it. Without
+        // this an agent could refill AND fire again in that same tick, since
+        // reloadTime (1.8s) comfortably outlasts gunCooldown (0.8s) and
+        // cooldown has long since expired by the time ammo refills.
+        if (a.reloadUntil >= tick) continue;
+        if (a.reloadUntil >= 0 && a.reloadUntil < tick) {
+          a.reloadUntil = -1;
+          a.ammo = COMBAT.magazineSize;
+          continue;
+        }
+        // An empty magazine starts one. Melee never reaches this — it does not
+        // spend ammo, so its count never falls.
+        if (a.weapon === 'gun' && a.ammo <= 0) {
+          a.reloadUntil = tick + Math.round(COMBAT.reloadTime / step);
+          continue;
+        }
 
         if (a.target < 0 || a.cooldown > 0) continue;
         const b = byId.get(a.target);

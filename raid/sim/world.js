@@ -158,6 +158,11 @@ export function createWorld(plan, mission, placements = []) {
       firedAt: -1,
       hitAt: -1,
       diedAt: -1,
+      // Gun agents only. A melee agent's ammo stays at the magazine size and
+      // is never read, so it can never be blocked by an empty one.
+      ammo: COMBAT.magazineSize,
+      // Tick at which a reload completes, or -1 when not reloading.
+      reloadUntil: -1,
       // The hostage is a prisoner until the squad reaches it: combat.js
       // treats a captive hostage as untargetable, so hostiles do not shoot
       // their own leverage. director.js clears this flag in the rescue phase
@@ -662,7 +667,7 @@ export function createWorld(plan, mission, placements = []) {
   world.hash = () => {
     const parts = [];
     for (const a of agents) {
-      parts.push(`${a.id}:${round(a.x)},${round(a.z)},${round(a.facing)},${round(a.speed)},${a.waitingFor},${a.hp},${a.alive ? 1 : 0}`);
+      parts.push(`${a.id}:${round(a.x)},${round(a.z)},${round(a.facing)},${round(a.speed)},${a.waitingFor},${a.hp},${a.alive ? 1 : 0},${a.ammo},${a.reloadUntil}`);
     }
     for (const d of Object.values(doors)) parts.push(`d${d.id}:${d.state}:${round(d.timer)}`);
     return parts.join('|');

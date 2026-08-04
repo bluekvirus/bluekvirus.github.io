@@ -37,6 +37,7 @@ const scene = (agents, placements = [], order, speeds) => {
     x: a.x, z: a.z, vx: 0, vz: 0, speed: 0, facing: 0,
     hp: a.hp ?? 100, alive: a.alive ?? true, target: -1, chasing: false, sprinting: false,
     cooldown: 0, firedAt: -1, hitAt: -1, diedAt: -1, captive: a.captive ?? false,
+    ammo: a.ammo ?? COMBAT.magazineSize, reloadUntil: a.reloadUntil ?? -1,
     goal: null, path: null, pathIndex: 0, wants: 0,
   }));
   const ordered = order ? order.map((i) => full[i]) : full;
@@ -479,4 +480,80 @@ test('a melee hostile carries more health than a gun hostile', () => {
 test('a charging melee agent closes faster than it walks', () => {
   assert.ok(COMBAT.meleeChargeSpeed > SIM.runSpeed,
     `meleeChargeSpeed ${COMBAT.meleeChargeSpeed} should exceed runSpeed ${SIM.runSpeed}`);
+});
+
+test('firing spends a round, and an empty magazine triggers a reload', () => {
+  const { agents, combat } = scene([
+    // Also never dies: the hostile fires back (weapon defaults to 'gun'), and
+    // at hostileAccuracy 0.70 against the shooter's default test hp of 100 it
+    // kills in ~4 hits — an expected ~270 ticks, well short of the ~480 ticks
+    // ten rounds at gunCooldown take to fire. Without this the shooter is
+    // reliably dead before its own magazine could ever run dry, and this test
+    // would be exercising who wins the firefight rather than ammo/reload.
+    { role: 'swat', x: 2, z: 2, hp: 100000 },
+    { role: 'hostile', x: 5, z: 2, hp: 100000 },  // never dies, so firing continues
+  ]);
+  const shooter = agents[0];
+  assert.equal(shooter.ammo, COMBAT.magazineSize, 'did not start with a full magazine');
+
+  let tick = 0;
+  let sawReload = false;
+  let lowest = COMBAT.magazineSize;
+  while (tick < 6000 && !sawReload) {
+    combat.step(tick++);
+    lowest = Math.min(lowest, shooter.ammo);
+    if (shooter.reloadUntil > tick) sawReload = true;
+  }
+  assert.equal(lowest, 0, `magazine never emptied (lowest ${lowest})`);
+  assert.ok(sawReload, 'an empty magazine never started a reload');
+});
+
+test('a reloading agent cannot fire', () => {
+  const { agents, combat } = scene([
+    // See the comment on the same fixture in the previous test: the shooter
+    // must survive the hostile's return fire long enough to reach a reload.
+    { role: 'swat', x: 2, z: 2, hp: 100000 },
+    { role: 'hostile', x: 5, z: 2, hp: 100000 },
+  ]);
+  const shooter = agents[0];
+  const target = agents[1];
+
+  let tick = 0;
+  while (tick < 6000 && shooter.reloadUntil <= tick) combat.step(tick++);
+  assert.ok(shooter.reloadUntil > tick, 'never entered a reload');
+
+  const hpAtReloadStart = target.hp;
+  const firedAtReloadStart = shooter.firedAt;
+  while (tick < shooter.reloadUntil) combat.step(tick++);
+
+  assert.equal(shooter.firedAt, firedAtReloadStart, 'fired while reloading');
+  assert.equal(target.hp, hpAtReloadStart, 'dealt damage while reloading');
+});
+
+test('a reload refills the magazine exactly once', () => {
+  const { agents, combat } = scene([
+    // See the comment on the same fixture above: the shooter must survive the
+    // hostile's return fire long enough to reach a reload.
+    { role: 'swat', x: 2, z: 2, hp: 100000 },
+    { role: 'hostile', x: 5, z: 2, hp: 100000 },
+  ]);
+  const shooter = agents[0];
+  let tick = 0;
+  while (tick < 6000 && shooter.reloadUntil <= tick) combat.step(tick++);
+  while (tick <= shooter.reloadUntil) combat.step(tick++);
+  combat.step(tick++);
+  assert.equal(shooter.ammo, COMBAT.magazineSize,
+    `magazine holds ${shooter.ammo} after a reload, expected ${COMBAT.magazineSize}`);
+});
+
+test('a melee agent has no ammunition and never reloads', () => {
+  // Ammo is a gun concept. A melee agent that could be blocked by an empty
+  // magazine would silently stop attacking with no visible cause.
+  const { agents, combat } = scene([
+    { role: 'hostile', x: 2, z: 2, weapon: 'melee' },
+    { role: 'swat', x: 2.5, z: 2, hp: 100000 },
+  ]);
+  for (let t = 0; t < 3000; t++) combat.step(t);
+  assert.equal(agents[0].reloadUntil, -1, 'a melee agent entered a reload');
+  assert.ok(agents[1].hp < 100000, 'the melee agent stopped attacking');
 });

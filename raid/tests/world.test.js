@@ -713,3 +713,14 @@ test('a wall-corner jam still recovers via replan even with a closed door furthe
   assert.notEqual(a.path, originalPath,
     'the stall never triggered replan() — the agent is frozen, having mistaken the distant door for what is jamming it');
 });
+
+test('the replay hash covers ammunition', () => {
+  const a = build('hash-ammo');
+  const b = build('hash-ammo');
+  for (let i = 0; i < 300; i++) { a.tick(); b.tick(); }
+  assert.equal(a.hash(), b.hash());
+
+  a.agents[0].ammo -= 1;
+  assert.notEqual(a.hash(), b.hash(),
+    'hash() ignores ammo — a diverging reload cycle would replay as identical');
+});
