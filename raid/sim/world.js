@@ -74,6 +74,13 @@ const NUDGE_TICKS = 20;
 // walking pace is ~32 ticks, so this is that with margin.
 const YIELD_TICKS = 45;
 
+// Below this, an agent counts as standing still rather than walking past, for
+// the purpose of deciding whether it is somebody else's stand-off partner.
+// 5% of walking pace: far enough above zero to cover an agent creeping in a
+// jam, far enough below `walkSpeed` that anyone actually going somewhere is
+// excluded.
+const STANDOFF_SPEED = SIM.walkSpeed * 0.05;
+
 // Every field either stall detector owns, reset to "clean, starting fresh
 // from here". Shared by every tick()-loop branch that deliberately holds or
 // idles rather than jams -- a gun halt, a melee hold, and an agent with
@@ -535,16 +542,30 @@ export function createWorld(plan, mission, placements = []) {
                 // escort down a corridor, where the hostage yielded to every
                 // squad member that drifted alongside it.
                 //
-                // "Getting nowhere" has a second shape the strike counter
-                // cannot report, and bodies made it reachable: an agent under
-                // no orders at all. It takes the no-path branch above every
-                // tick, which resets its bookkeeping, so `_goalStrikes` is
-                // pinned at 0 forever while it stands perfectly still — the
-                // captive hostage is permanently in this state, and so is any
-                // squad member between orders. It is not walking past; it is
-                // parked, and it is just as much in the way as a wall.
+                // The strike counter alone is not a sound test for that, and
+                // bodies made both of its blind spots reachable. It reads 0
+                // for an agent under no orders at all, which takes the no-path
+                // branch above every tick and resets its own bookkeeping — the
+                // captive hostage is permanently in this state. And it reads 0
+                // for an agent that IS jammed but was just re-tasked, because
+                // `setGoal` re-arms the ratchet: measured on seed dryW-11-32,
+                // two SWAT wedged against each other had their counters
+                // oscillate 0↔1 for 453 ticks as squad.js re-issued their
+                // objectives, so neither ever qualified as the other's rival
+                // and neither the nudge nor the yield ever fired.
+                //
+                // What the rule is actually reaching for is "is this agent
+                // going anywhere", and `speed` answers that directly: it is
+                // real displacement, not intent, so it is zero for a parked
+                // agent, zero for a jammed one, and emphatically non-zero for
+                // someone walking past — which is the only case the original
+                // exclusion existed to cover.
+                const stationary = other.speed < STANDOFF_SPEED;
+                if (other._goalStrikes === 0 && !stationary) continue;
+                // Parked is narrower than stationary: no orders at all, so it
+                // will still be here however long anyone waits. That is what
+                // decides right of way below.
                 const parked = !other.goal && !other.path && !other.chasing;
-                if (other._goalStrikes === 0 && !parked) continue;
                 const d = Math.hypot(a.x - other.x, a.z - other.z);
                 if (d < SIM.separation && d < rivalDist) {
                   rivalDist = d; rival = other.id; rivalParked = parked;
