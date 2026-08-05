@@ -988,3 +988,114 @@ test('a yield ends the moment the agent it is giving way to dies', () => {
     'the agent carried on backing away from a corpse');
 });
 
+test('an agent walks round parked bodies rather than giving way to them', () => {
+  // Giving way to something that will never move buys nothing, and as a
+  // standing policy it live-locks: back off, walk back in, back off again.
+  // Measured on this exact fixture, an unconditional give-way spent 1710 of
+  // 3600 ticks retreating and finished 8.08m short of the goal. Going round
+  // is the answer, and the nudge plus the contact-tangent slide are what do
+  // it — the yield is reserved for the case where there is nowhere to go.
+  const w = openRoom([{ x: 5, z: 5 }, { x: 5.5, z: 5 }, { x: 5.25, z: 5.45 }], 14);
+  const [mover, parkedA, parkedB] = w.agents;
+  const goal = { x: 10, z: 10 };
+  assert.equal(parkedA.goal, null, 'test setup: the first blocker was given orders');
+  assert.equal(parkedB.goal, null, 'test setup: the second blocker was given orders');
+  assert.ok(w.setGoal(mover.id, goal));
+
+  let yieldTicks = 0;
+  for (let i = 0; i < 3600; i++) {
+    w.tick();
+    if (mover._yieldTicks > 0) yieldTicks++;
+  }
+  assert.ok(Math.hypot(mover.x - goal.x, mover.z - goal.z) < 1,
+    `the mover finished ${Math.hypot(mover.x - goal.x, mover.z - goal.z).toFixed(2)}m short — it kept giving way instead of going round`);
+  // Not merely "arrived eventually": arriving while still spending a third of
+  // the run in retreat is the live-lock in slow motion, and would pass a
+  // distance-only check on a longer budget.
+  assert.ok(yieldTicks < 200,
+    `the mover spent ${yieldTicks} of 3600 ticks backing away from bodies that were never going to move`);
+});
+
+test('a body parked in a doorway can still be squeezed past', () => {
+  // The other half of not giving way to a parked obstacle. Retreating from a
+  // body standing in a doorway is precisely what stops anyone ever getting
+  // through it: the mover backs out of the only opening there is, walks back
+  // in, and backs out again. Measured on this fixture, giving way
+  // unconditionally left the mover on the wrong side for all 3600 ticks;
+  // going round instead squeezes it past in a few hundred.
+  const span = 14;
+  const plan = {
+    seed: 'plug-fixture',
+    config: { wallThickness: 0.1 },
+    bounds: { x: 0, z: 0, w: span, d: span },
+    cells: [
+      { id: 0, x: 0, z: 0, w: span, d: span / 2 },
+      { id: 1, x: 0, z: span / 2, w: span, d: span / 2 },
+    ],
+    doors: [{ id: 0, x: span / 2, z: span / 2, width: 1, axis: 'x' }],
+    adjacency: { 0: [1], 1: [0] },
+    walls: [],
+  };
+  const mission = {
+    spawns: {
+      swat: [
+        { x: span / 2, z: span / 2 - 2.5, facing: 0, cellId: 0 },
+        { x: span / 2 + 0.1, z: span / 2, facing: 0, cellId: 1 },
+      ],
+      hostiles: [],
+      hostage: { x: 1, z: 1, facing: 0, cellId: 0 },
+      extraction: { x: 1, z: 1 },
+    },
+  };
+  const w = createWorld(plan, mission, []);
+  const [mover, plug] = w.agents;
+  for (const d of Object.values(w.doors)) { d.state = 'open'; d.timer = SIM.doorOpenTime; }
+  assert.equal(plug.goal, null, 'test setup: the plug was given orders');
+  const target = { x: span / 2, z: span / 2 + 2.5 };
+  assert.ok(w.setGoal(mover.id, target));
+
+  let crossed = -1;
+  for (let i = 0; i < 3600; i++) {
+    w.tick();
+    if (crossed < 0 && mover.z > span / 2 + 0.5) crossed = i;
+  }
+  assert.ok(Math.hypot(plug.x - (span / 2 + 0.1), plug.z - span / 2) < 1e-9,
+    'test setup: the plug moved out of the doorway on its own');
+  assert.ok(crossed >= 0,
+    'the mover never got through a doorway with a body parked in it — it gave way instead of squeezing past');
+});
+
+test('whether an agent can go round is judged against its waypoint, not its final goal', () => {
+  // The two point very differently once a body is in the way, and the goal is
+  // the wrong one to ask about: the steering aims at the waypoint, so open
+  // floor in the goal's direction is room the agent will never use. Measured
+  // on seed dryY-10-63, a hostile pressed against the captive hostage had
+  // clear floor 50 degrees off its goal bearing — "can pass" said yes — while
+  // its waypoint lay on the far side of the hostage, and it held for 584
+  // ticks. Over 1,500 fresh dryrun-shaped missions, asking about the goal
+  // instead of the waypoint costs: worst hold 584 vs 528, three missions over
+  // the still-run bar vs one, 99.9th percentile 528 vs 369.
+  const w = openRoom([{ x: 5, z: 5 }, { x: 5.505, z: 5 }], 14);
+  const [mover, parked] = w.agents;
+  assert.equal(parked.goal, null, 'test setup: the blocker was given orders');
+  // Goal due north, where there is nothing but open floor; waypoint due east,
+  // directly behind the parked body. Asking about the goal finds room and
+  // declines to give way; asking about the waypoint finds none and gives way.
+  assert.ok(w.setGoal(mover.id, { x: 5, z: 12 }));
+  mover.path = [{ x: 6.2, z: 5 }];
+  mover.pathIndex = 0;
+
+  let yieldedTo = -1;
+  pin(w, 400, () => {
+    // Hold the waypoint: the stall machinery re-plans, and a fresh route to
+    // the northern goal would quietly remove the very geometry under test.
+    mover.path = [{ x: 6.2, z: 5 }];
+    mover.pathIndex = 0;
+    if (mover._yieldTicks > 0) yieldedTo = mover._yieldTo;
+  });
+
+  assert.ok(mover.id < parked.id,
+    'test setup: the mover must hold the LOWER id, or the plain id rule would explain the yield');
+  assert.equal(yieldedTo, parked.id,
+    'the mover judged it had room to go round because its GOAL direction was open, while the waypoint it actually steers at was walled off by a body');
+});

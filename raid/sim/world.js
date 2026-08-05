@@ -315,6 +315,51 @@ export function createWorld(plan, mission, placements = []) {
     return SIM.arriveRadius + (SIM.bodyRadius * 2 - gap);
   };
 
+  // How many directions `canPass` samples. 16 is 22.5° apart; only the half
+  // that still point at the goal are ever tested, so this is ~8 refusal
+  // checks, and only on a goal strike.
+  const PASS_PROBES = 16;
+
+  // Is there any step this agent could legally take that still makes headway
+  // toward `toward`? This is what separates "an obstacle I can walk round"
+  // from "an obstacle I am wedged behind", and the answer decides whether
+  // giving way is worth anything (see the parked branch in tick()).
+  //
+  // Measured against the WAYPOINT the agent is steering at, not its final
+  // goal. Those can point very differently once a body is in the way, and
+  // the goal is the wrong one: on seed dryY-10-63 a hostile pressed against
+  // the captive hostage had open floor 50 degrees off its goal bearing — so
+  // "can pass" said yes — but its waypoint lay on the far side of the
+  // hostage, so the nudge and the tangent slide both aimed at blocked
+  // ground and it held for 584 ticks. What decides whether going round is
+  // actually on offer is whether the steering has anywhere to go. Sampled
+  // rather than solved: the exact free set is an arc intersection against
+  // every nearby body and the grid, and this only has to tell a blocked
+  // pocket from open floor.
+  const canPass = (self, toward) => {
+    const gx = toward.x - self.x;
+    const gz = toward.z - self.z;
+    const glen = Math.hypot(gx, gz);
+    if (glen < 1e-6) return true;
+    const step = self.wants * SIM.step;
+    for (let k = 0; k < PASS_PROBES; k++) {
+      const ang = (k / PASS_PROBES) * Math.PI * 2;
+      const px = self.x + Math.cos(ang) * step;
+      const pz = self.z + Math.sin(ang) * step;
+      // "Makes headway" is measured as actually ending up closer, not as a
+      // positive dot product with the bearing. The dot is the same test in
+      // exact arithmetic and a different one in floating point: `Math.cos`
+      // of a right angle is 6.1e-17, not 0, so a probe exactly square to the
+      // bearing scored as progress and reported room to go round where there
+      // was none. That is not a rounding nicety — a body directly ahead
+      // leaves precisely the two square directions open, so it fired on the
+      // commonest geometry there is.
+      if (Math.hypot(toward.x - px, toward.z - pz) >= glen) continue;
+      if (!blockedAt(px, pz) && !bodyBlocking(self, px, pz)) return true;
+    }
+    return false;
+  };
+
   // Re-path from wherever the agent actually is, keeping the first few steps
   // raw and smoothing everything past them.
   //
@@ -571,16 +616,30 @@ export function createWorld(plan, mission, placements = []) {
                   rivalDist = d; rival = other.id; rivalParked = parked;
                 }
               }
-              // A parked rival takes right of way unconditionally. The id rule
-              // exists to break a symmetric contest between two agents that
-              // both want the same ground; there is nothing symmetric about a
-              // contest with an agent that wants nothing. It will never strike,
-              // never nudge and never give way, so if the mover does not go
-              // round it, nobody does — measured, a hostile pinned between the
-              // stationary hostage and a wall corner (seed dry-11-9) held
-              // position for 779 ticks waiting for a lower id that was never
-              // going to move.
-              if (rival >= 0 && (rivalParked || rival < a.id)) {
+              // The id rule does not apply to a parked rival in EITHER
+              // direction: it is not contesting this ground, so there is no
+              // symmetric contest for an id to break. What decides instead is
+              // whether this agent can get round on its own.
+              //
+              // Going round is always the better answer. Backing away from
+              // something that will never move buys nothing, and taken as a
+              // standing policy it live-locks: measured on an open-floor
+              // fixture with two parked bodies between an agent and its goal,
+              // an unconditional give-way spent 1710 of 3600 ticks retreating
+              // and finished 8.08m short, where the nudge and the tangent
+              // slide together walk round and arrive. Worse, a body parked in
+              // a doorway is not something to retreat from at all — retreating
+              // is what stops anyone ever squeezing past it.
+              //
+              // But when every step that still points at the goal is refused,
+              // going round is not on offer. That is the wedged case, and
+              // there giving way is the only move left: a hostile pinned
+              // between the stationary hostage and a wall corner (seed
+              // dry-11-9) had a free arc pointing only backwards, and held
+              // position for 779 ticks without it.
+              const giveWay = rival >= 0
+                && (rivalParked ? !canPass(a, target) : rival < a.id);
+              if (giveWay) {
                 a._yieldTo = rival;
                 a._yieldTicks = YIELD_TICKS;
                 a._nudgeBias = 0;
