@@ -65,6 +65,17 @@ const GOAL_STALL_EPS = 0.02;
 // genuinely symmetric stand-off keeps getting harder shoves.
 const NUDGE_TICKS = 20;
 
+// When an agent stops deferring to a neighbour that holds right of way by id
+// but is plainly not using it (the last-resort give-way in tick()). The
+// escalation first fires at two strikes, so this is one full GOAL_STALL_WINDOW
+// later: by then the senior partner in an ordinary two-agent contest has had a
+// complete 45-tick yield inside a complete 90-tick window in which to open the
+// gap. Still getting nowhere after that is evidence the contest is not one the
+// id rule can settle at all, rather than one it has not settled YET — which is
+// the distinction the whole rule turns on, and the reason this is a strike
+// count (a fact about repeated failure) rather than a timer.
+const LAST_RESORT_STRIKES = 3;
+
 // How long an agent that has been asked to give way spends backing off.
 // A sideways nudge cannot solve a stand-off over a gap narrower than
 // `SIM.separation` — two agents contending for a one-cell doorway push each
@@ -80,6 +91,18 @@ const YIELD_TICKS = 45;
 // jam, far enough below `walkSpeed` that anyone actually going somewhere is
 // excluded.
 const STANDOFF_SPEED = SIM.walkSpeed * 0.05;
+
+// How close counts as being IN CONTACT with another body, as a multiple of the
+// distance bodies are held apart at (see the contact scan in tick()). Two
+// agents the collision check has stopped against each other sit at exactly
+// `2 * bodyRadius` plus at most the step that was refused — a run step is
+// 3.2/60 = 0.053m — so 1.2x, 0.60m at the shipped radius, is "touching, as of
+// this tick" with room for the refused step and none to spare for a body that
+// merely happens to be nearby. Deliberately written as a multiple of the
+// contact distance rather than as an absolute margin: at `bodyRadius` 0 it
+// collapses to `d < 0`, so the contact rule cannot fire at all and the
+// right-of-way logic reduces exactly to what it was before bodies existed.
+const CONTACT_SCALE = 1.2;
 
 // Every field either stall detector owns, reset to "clean, starting fresh
 // from here". Shared by every tick()-loop branch that deliberately holds or
@@ -577,6 +600,13 @@ export function createWorld(plan, mission, placements = []) {
               let rival = -1;
               let rivalDist = Infinity;
               let rivalParked = false;
+              // A second, narrower scan running alongside the first: the
+              // nearest body actually TOUCHING this agent that outranks it by
+              // id. The nearest rival is the wrong thing to settle a cluster
+              // on — see the contact-set rule below the loop.
+              let contact = -1;
+              let contactDist = Infinity;
+              const touching = SIM.bodyRadius * 2 * CONTACT_SCALE;
               for (const other of agents) {
                 if (other === a || !other.alive) continue;
                 // Only an agent that is ITSELF getting nowhere counts as a
@@ -615,32 +645,89 @@ export function createWorld(plan, mission, placements = []) {
                 if (d < SIM.separation && d < rivalDist) {
                   rivalDist = d; rival = other.id; rivalParked = parked;
                 }
+                if (!parked && other.id < a.id && d < touching && d < contactDist) {
+                  contactDist = d; contact = other.id;
+                }
               }
+              // Who, if anyone, gets out of whose way. Three tiers, tried
+              // in order, each one covering a case the tier above provably
+              // cannot reach.
+              //
+              // TIER 1 — the contact set. The id rule is settled against
+              // every body this agent is TOUCHING, not against the single
+              // nearest one, and that distinction is the difference between a
+              // knot that unjams and one that never does. `rival` is whoever
+              // happens to be closest; in a cluster of three or four touching
+              // agents every member's closest neighbour can hold a higher id,
+              // so by a nearest-only rule every one of them nudges, not one
+              // gives way, and nothing breaks the symmetry. Measured on seed
+              // revE-10-31: four SWAT wedged in a rhombus at 0.507-0.525m,
+              // positions bit-identical for 11,185 consecutive ticks, striking
+              // forever, the mission ending only when MISSION_LIMIT fired. The
+              // one member that could have freed the knot — the only one with
+              // open floor behind it — was agent 2, whose NEAREST neighbour
+              // was agent 3 but which was also touching agents 0 and 1.
+              // Asking "is any body I am touching senior to me" gets it
+              // moving; asking only about the nearest one never can.
+              // Deliberately scoped to bodies in contact rather than to
+              // everything within `separation`: an agent is only ever
+              // physically held up by what it is touching, and the contact
+              // distance scales with `bodyRadius`, so at 0 this tier cannot
+              // fire and the rule below is exactly the pre-body one.
+              //
+              // TIER 2 — the plain id rule, and the parked exception to it.
               // The id rule does not apply to a parked rival in EITHER
               // direction: it is not contesting this ground, so there is no
               // symmetric contest for an id to break. What decides instead is
-              // whether this agent can get round on its own.
+              // whether this agent can get round on its own. Going round is
+              // the better answer whenever it is available — backing away from
+              // something that will never move buys nothing, and a body parked
+              // in a doorway is not something to retreat from at all, since
+              // retreating is what stops anyone ever squeezing past it. But
+              // when every step that still points at the waypoint is refused,
+              // going round is not on offer, and giving way is the only move
+              // left: a hostile pinned between the stationary hostage and a
+              // wall corner (seed dry-11-9) had a free arc pointing only
+              // backwards, and held position for 779 ticks without it.
               //
-              // Going round is always the better answer. Backing away from
-              // something that will never move buys nothing, and taken as a
-              // standing policy it live-locks: measured on an open-floor
-              // fixture with two parked bodies between an agent and its goal,
-              // an unconditional give-way spent 1710 of 3600 ticks retreating
-              // and finished 8.08m short, where the nudge and the tangent
-              // slide together walk round and arrive. Worse, a body parked in
-              // a doorway is not something to retreat from at all — retreating
-              // is what stops anyone ever squeezing past it.
-              //
-              // But when every step that still points at the goal is refused,
-              // going round is not on offer. That is the wedged case, and
-              // there giving way is the only move left: a hostile pinned
-              // between the stationary hostage and a wall corner (seed
-              // dry-11-9) had a free arc pointing only backwards, and held
-              // position for 779 ticks without it.
-              const giveWay = rival >= 0
-                && (rivalParked ? !canPass(a, target) : rival < a.id);
-              if (giveWay) {
-                a._yieldTo = rival;
+              // TIER 3 — the last resort. An agent still getting nowhere a
+              // full window after the escalation began gives way to whoever is
+              // nearest, whatever the ids say and whatever `canPass` thinks.
+              // Both of the rules above presume something that can stop being
+              // true: the id rule presumes the agent holding right of way CAN
+              // move, and the parked rule presumes that `canPass` finding open
+              // floor means this agent can USE it. Where either presumption
+              // fails, deferring is deferring forever.
+              //   - revG-8-1: three SWAT queued along a wall, the leader
+              //     pinned in a corner pocket with a route round a corner it
+              //     could not cut, its one neighbour senior to it by id, and
+              //     that neighbour in turn sealed in by the third. 11,069
+              //     still ticks, every recovery signal reporting normally.
+              //   - rH-10-73: a hostile pressed against the captive hostage
+              //     with `canPass` reporting open floor it could not reach
+              //     from behind the body. 1,081 still ticks of nudging.
+              // Delayed by LAST_RESORT_STRIKES rather than applied at once, so
+              // an ordinary two-agent contest still resolves the way it is
+              // proven to: the junior partner holds its ground and pushes
+              // through the gap the senior one opens by yielding, rather than
+              // both backing out of it and neither using it. Measured over
+              // 7,200 fresh missions, extending this tier to parked rivals as
+              // well took the worst still-run from 1,081 to 417 and cost
+              // nothing measurable in extraction (31.39%/29.69% against
+              // 31.39%/29.56% on the two families).
+              // Scoped to a rival in actual CONTACT, like tier 1 and for the
+              // same two reasons: an agent is only ever physically held up by
+              // what it is touching, and the contact distance scales with
+              // `bodyRadius`, so at 0 this tier cannot fire either and the
+              // whole of what bodies added here is provably inert.
+              const lastResort = a._goalStrikes >= LAST_RESORT_STRIKES && rivalDist < touching;
+              const giveWayTo = contact >= 0 ? contact
+                : rival < 0 ? -1
+                : (!rivalParked && rival < a.id) ? rival
+                : (lastResort || (rivalParked && !canPass(a, target))) ? rival
+                : -1;
+              if (giveWayTo >= 0) {
+                a._yieldTo = giveWayTo;
                 a._yieldTicks = YIELD_TICKS;
                 a._nudgeBias = 0;
                 a._nudgeTicks = 0;

@@ -324,7 +324,15 @@ test('right of way in a stand-off goes to the lowest id, and only one side gives
   let bYieldedTo = -1;
   let aMaxNudge = 0;
   let bMaxNudge = 0;
-  pin(w, 400, () => {
+  // 260 ticks, not 400, and the number is arithmetic rather than taste. A
+  // strike lands every GOAL_STALL_WINDOW (90) ticks, the escalation this test
+  // watches first fires at the second strike (tick 180), and at the third
+  // (tick 270) world.js's last-resort give-way deliberately sets the id rule
+  // aside — an agent still getting nowhere a full window after the senior
+  // partner started yielding is in a contest the id rule cannot settle (see
+  // LAST_RESORT_STRIKES). So this window is "after the rule has engaged and
+  // before it is allowed to relax", where the asymmetry is absolute.
+  pin(w, 260, () => {
     if (a._yieldTicks > 0) aEverYielded = true;
     if (b._yieldTicks > 0) bYieldedTo = b._yieldTo;
     aMaxNudge = Math.max(aMaxNudge, Math.abs(a._nudgeBias));
@@ -335,6 +343,69 @@ test('right of way in a stand-off goes to the lowest id, and only one side gives
   assert.equal(aEverYielded, false, 'the lower id gave way too — both sides retreating solves nothing');
   assert.ok(aMaxNudge > 0, 'the agent with right of way never got a nudge to break the tie with');
   assert.equal(bMaxNudge, 0, 'the yielding agent was nudged as well as backing off; it should do one or the other');
+});
+
+test('an agent stops deferring to a neighbour that is plainly not using its right of way', () => {
+  // The other side of the test above, and the reason it has to stop at 260
+  // ticks. Right of way by id presumes the agent holding it CAN move. When it
+  // cannot, deferring to it is deferring forever: measured on seed revG-8-1,
+  // three SWAT queued along a wall — the leader pinned in a corner pocket, its
+  // one neighbour senior to it by id, that neighbour in turn sealed in by the
+  // third — held for 11,069 consecutive ticks of zero displacement, with every
+  // recovery signal reporting normally, until MISSION_LIMIT ended the mission.
+  //
+  // Same fixture as above, run past the point where the id rule is allowed to
+  // relax. This is the ONLY thing that changes at that point: the junior agent
+  // must hold its ground first, for long enough that the senior one's yield
+  // gets a full window to open the gap, and only then give up on it.
+  const w = openRoom([{ x: 5, z: 5 }, { x: 5.3, z: 5 }]);
+  const [a] = w.agents;
+  w.setGoal(0, { x: 10, z: 10 });
+  w.setGoal(1, { x: 10, z: 10 });
+
+  let firstYieldTick = -1;
+  let yieldedTo = -1;
+  pin(w, 400, (tick) => {
+    if (a._yieldTicks > 0 && firstYieldTick < 0) { firstYieldTick = tick; yieldedTo = a._yieldTo; }
+  });
+
+  assert.ok(firstYieldTick > 0,
+    'the lower id never gave way at all — it deferred forever to a neighbour that never moved');
+  assert.equal(yieldedTo, 1, 'it backed away from something other than the agent in its way');
+  // Not before the third strike (tick 270). Giving up sooner is the live-lock
+  // the id rule exists to prevent: both sides back out of the one opening and
+  // neither uses it.
+  assert.ok(firstYieldTick >= 270,
+    `the lower id gave way at tick ${firstYieldTick}, before the senior partner's yield had a full window to work`);
+});
+
+test('right of way is settled against every body in contact, not just the nearest one', () => {
+  // Three agents in a knot. The middle one's NEAREST neighbour outranks it, so
+  // a nearest-only id rule leaves it nudging; but it is also touching one that
+  // does not, and that is the one it has to give way to. With every member of
+  // a cluster in that position, every member nudges, none yields, and nothing
+  // breaks the symmetry: measured on seed revE-10-31, four SWAT wedged in a
+  // rhombus at 0.507-0.525m apart held positions that were bit-identical for
+  // 11,185 consecutive ticks.
+  const w = openRoom([{ x: 5, z: 5 }, { x: 5.52, z: 5 }, { x: 5.52, z: 5.51 }]);
+  const [junior, mover, senior] = w.agents;
+  for (const a of w.agents) assert.ok(w.setGoal(a.id, { x: 10, z: 10 }));
+
+  const gap = (p, q) => Math.hypot(p.x - q.x, p.z - q.z);
+  assert.ok(gap(mover, senior) < gap(mover, junior),
+    'test setup: the mover’s nearest neighbour is not the senior one, so the nearest-only rule would already work');
+  assert.ok(gap(mover, junior) < SIM.bodyRadius * 2 * 1.2,
+    'test setup: the junior neighbour is not in contact, so the contact rule is not what is under test');
+  assert.ok(junior.id < mover.id && mover.id < senior.id, 'test setup: ids are the wrong way round');
+
+  let yieldedTo = -1;
+  // Stops short of the third strike (tick 270), where the last-resort rule
+  // would make the mover give way to its nearest neighbour anyway and this
+  // would stop proving anything. See the stand-off test above.
+  pin(w, 260, () => { if (mover._yieldTicks > 0 && yieldedTo < 0) yieldedTo = mover._yieldTo; });
+
+  assert.equal(yieldedTo, junior.id,
+    'the middle agent never gave way to the junior body it was touching — it only looked at its nearest neighbour, which outranks it');
 });
 
 test('a replan keeps a short raw lead and smooths the rest of the route', () => {
@@ -870,7 +941,9 @@ test('right of way goes to a parked neighbour whatever the ids say', () => {
 
   let moverYieldedTo = -1;
   let parkedEverYielded = false;
-  pin(w, 400, () => {
+  // Short of the third strike (tick 270), where the last-resort rule gives way
+  // to a neighbour whatever the ids say and this would stop proving anything.
+  pin(w, 260, () => {
     if (mover._yieldTicks > 0) moverYieldedTo = mover._yieldTo;
     if (parked._yieldTicks > 0) parkedEverYielded = true;
   });
@@ -1016,6 +1089,7 @@ test('an agent walks round parked bodies rather than giving way to them', () => 
     `the mover spent ${yieldTicks} of 3600 ticks backing away from bodies that were never going to move`);
 });
 
+
 test('a body parked in a doorway can still be squeezed past', () => {
   // The other half of not giving way to a parked obstacle. Retreating from a
   // body standing in a doorway is precisely what stops anyone ever getting
@@ -1086,7 +1160,9 @@ test('whether an agent can go round is judged against its waypoint, not its fina
   mover.pathIndex = 0;
 
   let yieldedTo = -1;
-  pin(w, 400, () => {
+  // Short of the third strike (tick 270), where the last-resort rule gives way
+  // whatever `canPass` says and this would stop proving anything.
+  pin(w, 260, () => {
     // Hold the waypoint: the stall machinery re-plans, and a fresh route to
     // the northern goal would quietly remove the very geometry under test.
     mover.path = [{ x: 6.2, z: 5 }];
