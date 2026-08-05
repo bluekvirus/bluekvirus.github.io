@@ -208,7 +208,15 @@ engine.runRenderLoop(() => {
       outcomeEl.dataset.state = director.result;
     } else {
       const alive = (role) => world.agents.filter((a) => a.role === role && a.alive).length;
-      outcomeEl.textContent = `SWAT ${alive('swat')}/${CAST.swat} · HOSTILES ${alive('hostile')}/${CAST.hostiles} · ${director.visited.size}/${plan.cells.length} CLEARED`;
+      // `reloadUntil` is a tick stamp, not a duration, and sits at -1 whenever
+      // an agent is not reloading — so this is a live count, not a running
+      // total. Dropped from the readout entirely when it is zero rather than
+      // shown as "0 RELOADING", which would only be noise for most of a run.
+      const reloading = world.agents.filter((a) => a.alive && a.reloadUntil > world.ticks).length;
+      outcomeEl.textContent =
+        `SWAT ${alive('swat')}/${CAST.swat} · HOSTILES ${alive('hostile')}/${CAST.hostiles}`
+        + ` · ${director.visited.size}/${plan.cells.length} CLEARED`
+        + (reloading > 0 ? ` · ${reloading} RELOADING` : '');
       outcomeEl.dataset.state = 'live';
     }
   }

@@ -9,6 +9,7 @@
 // sim has no notion of wall-clock time at all.
 
 import { facingToRotationY } from './facing.js';
+import { buildReloadClip } from './reload-clip.js';
 import { SIM } from './sim/world.js';
 
 const BLEND = 0.15;      // seconds to cross-fade between clips
@@ -27,10 +28,14 @@ const FACING_CONE = Math.PI / 4;
 // line, not in the rig: an unreachable entry costs every one of the twelve
 // figures its own dead weight/playing bookkeeping for a clip nothing will
 // ever request.
+//
+// `Rifle_Reload` is the one name here the pack does not ship: it is built per
+// figure by raid/reload-clip.js and slotted into the same bookkeeping as the
+// imported clips, so nothing downstream has to care where a group came from.
 const CLIP_NAMES = [
   'Idle', 'Walk', 'Run', 'Run_Back', 'Run_Left', 'Run_Right',
   'Idle_Gun_Pointing', 'Idle_Gun_Shoot', 'Gun_Shoot',
-  'Sword_Slash', 'HitRecieve', 'Death',
+  'Sword_Slash', 'HitRecieve', 'Death', 'Rifle_Reload',
 ];
 
 /**
@@ -77,10 +82,24 @@ function clipDurationTicks(group) {
  * (one figure's own skeleton and groups), same shape whether it is set up up
  * front (SWAT, hostiles) or later, the moment the hostage is rescued (see
  * sync() below). */
-function makeRig(figure) {
+function makeRig(figure, scene) {
   const groups = Object.fromEntries(CLIP_NAMES.map((n) => [n, figure.groups.find((g) => g.name === n)]));
+  // The pack ships no reload clip, so this one is authored at runtime against
+  // this figure's own skeleton — see reload-clip.js. It can come back null on a
+  // rig that lacks the bones or the pose source it keys against; every lookup
+  // downstream already tolerates a missing group (`groups.find(...)` here can
+  // return undefined for an imported clip too, and crossfade guards `if (!g)
+  // continue`), so such a figure just falls through to the next clip in
+  // combatClip's priority order rather than freezing.
+  const reloadGroup = buildReloadClip(figure.skeleton, scene);
+  groups.Rifle_Reload = reloadGroup ?? undefined;
   return {
     groups,
+    // Owned by this rig, unlike every other group here — those belong to the
+    // cast and are disposed with it. This one was built here, so this module
+    // disposes it (see dispose() below) rather than leaking it into the scene
+    // on every Regenerate.
+    reloadGroup,
     // Per-clip one-shot request window, in sim ticks — see
     // clipDurationTicks above. Computed once here, from this rig's own
     // groups, not shared across figures: every figure in this pack happens
@@ -186,6 +205,20 @@ function combatClip(agent, ticks, durations, latch) {
   if (!agent.alive) return 'Death';
   if (agent.hitAt >= 0 && ticks - agent.hitAt < durations.HitRecieve) return 'HitRecieve';
 
+  // The simulation owns how long a reload takes; the animation tracks it
+  // rather than the reverse. Driving this from the clip's own length would
+  // let the two drift apart, and the sim's duration is the one that decides
+  // when the agent can shoot again.
+  //
+  // Above the firing branch, so an agent that has just emptied its magazine
+  // reads as reloading rather than holding a shot it cannot take — the last
+  // round's fire clip is cut short by exactly this, one tick after it lands,
+  // and that is the intended reading: the gun is empty, the hands move.
+  // Below flinch, so a hit landing mid-reload still registers. `reloadUntil`
+  // is a tick stamp (-1 when idle, never a duration) and is only ever set on
+  // gun agents, so a melee agent can never take this branch.
+  if (agent.reloadUntil > ticks) return 'Rifle_Reload';
+
   if (agent.firedAt >= 0 && agent.firedAt !== latch.firedAt) {
     // A new attack (hit or miss — `attack()` sets `firedAt` regardless)
     // fired since this rig last looked. Decide the clip once, from
@@ -227,7 +260,7 @@ export function bindAgents(scene, world, cast, director, agentDiscs = []) {
   const rigs = new Map(); // agent index -> rig
   cast.figures.forEach((fig, i) => {
     if (fig.role === 'hostage') return; // floor pose; its rig is added on rescue
-    rigs.set(i, makeRig(fig));
+    rigs.set(i, makeRig(fig, scene));
   });
   const hostageFigure = cast.figures.find((fig) => fig.role === 'hostage');
   let hostageRescued = false;
@@ -389,7 +422,7 @@ export function bindAgents(scene, world, cast, director, agentDiscs = []) {
       if (!hostageRescued && hostageFigure && director?.hostageReached) {
         hostageRescued = true;
         hostageFigure.standUp();
-        rigs.set(cast.figures.indexOf(hostageFigure), makeRig(hostageFigure));
+        rigs.set(cast.figures.indexOf(hostageFigure), makeRig(hostageFigure, scene));
       }
 
       // Clip choice per figure now that every figure owns its own skeleton
@@ -404,6 +437,9 @@ export function bindAgents(scene, world, cast, director, agentDiscs = []) {
     dispose() {
       for (const rig of rigs.values()) {
         for (const g of Object.values(rig.groups)) g?.stop();
+        // Built here rather than imported with the cast, so it has to be
+        // disposed here too — cast.dispose() only knows about `figure.groups`.
+        rig.reloadGroup?.dispose();
       }
       rigs.clear();
     },
