@@ -880,3 +880,82 @@ test('right of way goes to a parked neighbour whatever the ids say', () => {
   assert.equal(parkedEverYielded, false,
     'the parked agent yielded too — it has no orders to give up, and both sides retreating solves nothing');
 });
+
+test('a tangent is taken around the body actually in the way, not the lowest id', () => {
+  // A proposed step can be inside several bodies at once — measured over 200
+  // missions, 14.6% of tangent contacts were. Taking the first one found
+  // takes the lowest id, which was not the deepest contact 7.3% of the time,
+  // and a tangent computed around a body that is not the one in the way
+  // points straight into the one that is.
+  //
+  // Here the walker meets a pair straddling its route. The higher id is the
+  // deeper contact, so the two rules round the pair on opposite sides;
+  // measured, the lowest-id rule leaves the walker stuck at z=3.8 while the
+  // deepest-contact rule carries it through to z=8.9.
+  const w = openRoom([{ x: 5, z: 2 }, { x: 5.32, z: 5 }, { x: 4.82, z: 5.05 }], 14);
+  const [walker, lowId, highId] = w.agents;
+  assert.ok(lowId.id < highId.id, 'test setup: ids are the wrong way round');
+  assert.ok(Math.hypot(lowId.x - highId.x, lowId.z - highId.z) >= SIM.bodyRadius * 2,
+    'test setup: the two blockers start overlapping each other');
+  // On the walker's line of travel the higher id is the closer of the two,
+  // so "deepest" and "lowest id" cannot pick the same body.
+  assert.ok(Math.abs(highId.x - walker.x) < Math.abs(lowId.x - walker.x),
+    'test setup: the deeper contact is not the higher id, so the two rules agree and this proves nothing');
+
+  assert.ok(w.setGoal(walker.id, { x: 5, z: 9 }));
+  for (let i = 0; i < 2000; i++) w.tick();
+  assert.ok(walker.z > 7,
+    `the walker only reached z=${walker.z.toFixed(2)} — it tangented around the shallower body and jammed on the other`);
+});
+
+test('a waypoint that lands inside a body still counts as reached', () => {
+  // Routes are planned on a grid that knows nothing about agents, so a
+  // waypoint can sit inside someone. `arriveRadius` (0.28m) is well inside
+  // the 0.50m bodies keep apart, so the agent can never satisfy it: it
+  // presses against the body and `pathIndex` never advances. Measured on
+  // seed dryW-11-34, a hostile held station against the captive hostage for
+  // 890 ticks over a waypoint 0.461m from its centre.
+  const w = openRoom([{ x: 5, z: 5 }, { x: 5, z: 8 }], 14);
+  const [walker, blocker] = w.agents;
+  assert.ok(w.setGoal(walker.id, { x: 5, z: 11 }));
+  // Force the pathological shape directly rather than hoping a generated
+  // route produces it: a waypoint exactly on the stationary agent.
+  walker.path = [{ x: blocker.x, z: blocker.z }, { x: 5, z: 11 }];
+  walker.pathIndex = 0;
+
+  for (let i = 0; i < 1800; i++) w.tick();
+  assert.ok(Math.hypot(blocker.x - 5, blocker.z - 8) < 1e-9,
+    'test setup: the blocker moved, so it was never an obstacle');
+  assert.ok(walker.pathIndex > 0 || walker.path === null,
+    'the walker never got past a waypoint standing inside another agent');
+  assert.ok(walker.z > 10,
+    `the walker stopped at z=${walker.z.toFixed(2)} — it never reached the waypoint past the body`);
+});
+
+test('a yield ends the moment the agent it is giving way to dies', () => {
+  // A corpse blocks nothing, so every tick still spent backing away from one
+  // is walked in the wrong direction. Harmless while the yield fired once in
+  // 300 missions; bodies make it fire hundreds of times.
+  const w = openRoom([{ x: 5, z: 5 }, { x: 5.3, z: 5 }]);
+  const [low, high] = w.agents;
+  w.setGoal(0, { x: 10, z: 10 });
+  w.setGoal(1, { x: 10, z: 10 });
+
+  let sawYield = false;
+  pin(w, 400, () => { if (high._yieldTicks > 0) sawYield = true; });
+  assert.ok(sawYield, 'test setup: the higher id never yielded, so there is no yield to interrupt');
+
+  // Catch it mid-yield, then kill the rival.
+  let guard = 0;
+  while (high._yieldTicks === 0 && guard++ < 400) {
+    w.tick();
+    w.agents.forEach((a) => { a.x = a.id === 0 ? 5 : 5.3; a.z = 5; });
+  }
+  assert.ok(high._yieldTicks > 0, 'could not catch the yield in progress');
+  low.hp = 0;
+  w.tick();
+  assert.equal(low.alive, false, 'the fixture did not actually kill the rival');
+  assert.equal(high._yieldTicks, 0,
+    'the agent carried on backing away from a corpse');
+});
+

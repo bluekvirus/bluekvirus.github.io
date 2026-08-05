@@ -7,7 +7,7 @@
 
 import { makeRng } from '../rng.js';
 import { buildNavGrid } from './navgrid.js';
-import { findPath, smoothPath } from './path.js';
+import { findPath, smoothPath, hasLineOfSight } from './path.js';
 import { createCombat, COMBAT, rangeOf } from './combat.js';
 
 export const SIM = Object.freeze({
@@ -249,19 +249,63 @@ export function createWorld(plan, mission, placements = []) {
   // deliberately: a dead agent that blocked movement could seal a corridor
   // with nothing able to clear it.
   //
-  // Returns the blocker rather than a boolean because the tangent slide in
-  // tick() needs the contact normal, and returns the FIRST one found — that is
-  // the lowest id, which is stable and derived from nothing but ids, so a seed
-  // replays identically. With `bodyRadius` at 0 no distance can be under the
+  // Returns the blocker rather than a boolean, because the tangent slide in
+  // tick() needs a contact normal — and specifically the DEEPEST one, not the
+  // first found. A point can be inside several bodies at once (measured over
+  // 200 missions: 14.6% of tangent contacts), and taking the first meant
+  // taking the lowest id, which was not the nearest 7.3% of the time — a
+  // tangent computed around a body that is not the one actually in the way
+  // points straight into the one that is. Deepest is just as deterministic
+  // (ties keep the earlier, i.e. lower, id) and is the contact that has to be
+  // resolved first. With `bodyRadius` at 0 no distance can be under the
   // minimum, so this returns null for every query and the whole mechanism
   // (this check and the tangent slide that depends on it) is inert.
   const bodyBlocking = (self, x, z) => {
     const min = SIM.bodyRadius * 2;
+    let worst = null;
+    let worstPen = 0;
     for (const other of agents) {
       if (other === self || !other.alive) continue;
-      if (Math.hypot(x - other.x, z - other.z) < min) return other;
+      const pen = min - Math.hypot(x - other.x, z - other.z);
+      if (pen > worstPen) { worstPen = pen; worst = other; }
     }
-    return null;
+    return worst;
+  };
+
+  // How close counts as having reached a waypoint. Normally `arriveRadius`,
+  // but routes are planned on a grid that knows nothing about agents, so a
+  // waypoint can land inside a living body — and `arriveRadius` (0.28m) is
+  // well inside the 0.50m bodies keep apart, so the agent can then NEVER
+  // satisfy it. It presses against the body, `pathIndex` never advances, and
+  // no stall signal helps: the goal-strike machinery keeps re-planning a
+  // route to a goal it has not moved toward, and the nudge and the tangent
+  // slide both faithfully steer at a waypoint that cannot be occupied.
+  // Measured on seed dryW-11-34: a hostile held station against the captive
+  // hostage for 890 ticks over a waypoint 0.461m from the hostage's centre.
+  //
+  // Where a body is what makes the waypoint unreachable, arriving means
+  // getting as close as the body allows — the exact shortfall, not a fudge
+  // factor, so a waypoint merely NEAR a body is unaffected. Inert at
+  // `bodyRadius` 0, where nothing is ever inside a body.
+  //
+  // Guarded by line of sight to the waypoint AFTER this one, because the
+  // relaxation can be large — up to `arriveRadius + 2 * bodyRadius` (0.78m)
+  // when a waypoint sits on a body's centre — and `smoothPath` only
+  // guarantees a clear run between CONSECUTIVE waypoints. Advancing three
+  // quarters of a metre early leaves the agent aiming at a waypoint it may
+  // have no clear line to, straight through the corner the route was shaped
+  // to go round: measured on seed dry-12-3, doing this unguarded turned a
+  // 371-tick hold into an 844-tick one by walking a SWAT into a wall.
+  const arriveReach = (self, point) => {
+    const occupant = bodyBlocking(self, point.x, point.z);
+    if (!occupant) return SIM.arriveRadius;
+    const next = self.path[self.pathIndex + 1];
+    // Doors are treated as open here for the same reason the route was
+    // planned that way: a shut door on the line is something to walk up to
+    // and open, not a reason to call the next waypoint unreachable.
+    if (next && !hasLineOfSight(grid, self, next, () => true)) return SIM.arriveRadius;
+    const gap = Math.hypot(point.x - occupant.x, point.z - occupant.z);
+    return SIM.arriveRadius + (SIM.bodyRadius * 2 - gap);
   };
 
   // Re-path from wherever the agent actually is, keeping the first few steps
@@ -389,7 +433,7 @@ export function createWorld(plan, mission, placements = []) {
           resetStallBookkeeping(a);
           continue;
         }
-      } else if (dist < SIM.arriveRadius) {
+      } else if (dist < arriveReach(a, target)) {
         a.pathIndex++;
         if (a.pathIndex >= a.path.length) { a.path = null; a.goal = null; a.vx = 0; a.vz = 0; }
         continue;
@@ -574,13 +618,25 @@ export function createWorld(plan, mission, placements = []) {
       // not enough here — the goal keeps pulling this agent back into the
       // opening it is supposed to be clearing. Bounded in time, so a
       // yielding agent always resumes its own route.
+      //
+      // A rival that dies mid-yield ends the yield immediately. A corpse does
+      // not block anything (see `bodyBlocking`), so there is nothing left to
+      // clear and every remaining tick spent backing away from it is a tick
+      // walked in the wrong direction. Harmless while the yield fired once in
+      // 300 missions; bodies make it fire hundreds of times, and it was
+      // measured costing 44 ticks of retreat from corpses.
       if (a._yieldTicks > 0) {
         const rival = agents[a._yieldTo];
-        const ox = a.x - rival.x;
-        const oz = a.z - rival.z;
-        const d = Math.hypot(ox, oz);
-        if (d > 1e-6) { dirX = ox / d; dirZ = oz / d; }
-        a._yieldTicks--;
+        if (!rival || !rival.alive) {
+          a._yieldTicks = 0;
+          a._yieldTo = -1;
+        } else {
+          const ox = a.x - rival.x;
+          const oz = a.z - rival.z;
+          const d = Math.hypot(ox, oz);
+          if (d > 1e-6) { dirX = ox / d; dirZ = oz / d; }
+          a._yieldTicks--;
+        }
       }
 
       const norm = Math.hypot(dirX, dirZ) || 1;
@@ -624,7 +680,13 @@ export function createWorld(plan, mission, placements = []) {
         return bodyBlocking(a, x, z) ? { blocked: true, doorId: -1 } : r;
       };
 
-      const primary = refusalWithBodies(nx, nz);
+      // The direct step is spelled out rather than going through the wrapper
+      // so the body that refused it can be KEPT: the tangent slide below needs
+      // exactly that body's contact normal, and asking a second time is both
+      // wasted work and a chance for the two answers to disagree.
+      const primaryWall = refusalAt(nx, nz);
+      const primaryBody = primaryWall.blocked ? null : bodyBlocking(a, nx, nz);
+      const primary = primaryBody ? { blocked: true, doorId: -1 } : primaryWall;
       const slideX = primary.blocked ? refusalWithBodies(nx, a.z) : null;
       const slideZ = (slideX && slideX.blocked) ? refusalWithBodies(a.x, nz) : null;
 
@@ -652,7 +714,7 @@ export function createWorld(plan, mission, placements = []) {
       let tanX = 0;
       let tanZ = 0;
       if (slideZ && slideZ.blocked) {
-        const blocker = bodyBlocking(a, nx, nz);
+        const blocker = primaryBody;
         if (blocker) {
           // Normal points from the blocker to this agent, so removing the
           // along-normal component of `dir` leaves pure tangential travel,

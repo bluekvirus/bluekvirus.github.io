@@ -393,10 +393,40 @@ test('no agent is ever left frozen short of its goal', () => {
   // fix for the identical defect), closing the live-lock. Re-measured
   // post-fix over a 1500-mission fresh sweep (`revD-N`, room counts 8-12):
   // hostage worst still-run 25 (down from 571), global worst 183 — now a SWAT
-  // agent, not the hostage — on seed `revD-9-25`. 400 keeps a real ~2.19x
-  // margin over that measured worst while staying an order of magnitude below
-  // the thousands of ticks a genuine freeze rides out to.
-  assert.ok(maxStillRun < 400,
+  // agent, not the hostage — on seed `revD-9-25`.
+  //
+  // RE-DERIVED when agents got bodies. Everything above still holds, but the
+  // arithmetic it rests on changed, and the 400 it produced became a bar this
+  // suite could only clear because its seed set is frozen: measured with this
+  // very tracker over 2,500 fresh dryrun-shaped missions, the pre-body figure
+  // of 51 became 501, so a fresh 50-seed family had roughly a 4% chance of
+  // tripping a "passing" build.
+  //
+  // Two things moved. The recovery cycle is longer: the right-of-way yield
+  // fired zero times in 790,368 pre-body agent-ticks and now fires once or
+  // twice a mission, so the loop is GOAL_STALL_WINDOW (90) + YIELD_TICKS (45)
+  // = 135 ticks, not the 110 the old number was built from. And the loop can
+  // legitimately run several times: two agents contesting one opening take a
+  // round to detect the jam, a round for one to clear it, and a round for the
+  // other to use the space, and each retry is a fresh 135.
+  //
+  // So the property is unchanged — a bounded multiple of a cycle time fixed
+  // by constants, not a number chasing whatever the worst sampled seed did —
+  // but the cycle is 135 and the multiple has to allow real retries. 800 is
+  // 5.9 cycles. Measured over the same 2,500 fresh missions after the body
+  // fixes: worst 528 (seed `dryZ-12-85`, two SWAT in a symmetric stand-off,
+  // 3.9 cycles), 99.9th percentile 320, 99th 198, median 25 — so 800 keeps a
+  // 1.51x margin on the measured worst while staying far below the thousands
+  // of ticks a genuine freeze rides out to (the freezes this round fixed sat
+  // at 1707, 1887 and 11,724).
+  //
+  // This number scales with SIM.bodyRadius and nothing else here. Measured on
+  // this tree over the same 2,500 fresh missions per radius: 0.15 -> worst
+  // 230 (none over 300), 0.20 -> 325, 0.25 (shipped) -> 528, 0.30 -> 2427
+  // with three missions over 400. If Task 6 lowers the radius, lower this
+  // with it rather than leaving the slack behind; if it raises it past 0.25,
+  // this bar has to be re-derived again, because 0.30 breaches even 800.
+  assert.ok(maxStillRun < 800,
     `${stillAt} held a path with zero displacement for ${maxStillRun} consecutive ticks`);
 });
 
