@@ -365,6 +365,20 @@ export function createWorld(plan, mission, placements = []) {
   // have no clear line to, straight through the corner the route was shaped
   // to go round: measured on seed dry-12-3, doing this unguarded turned a
   // 371-tick hold into an 844-tick one by walking a SWAT into a wall.
+  //
+  // On the LAST waypoint that guard is skipped, and deliberately: `next` is
+  // undefined there, so the full relaxation applies unconditionally at
+  // exactly the point where it is largest. There is nothing for the guard to
+  // protect — reaching the last waypoint clears `path` and `goal` rather than
+  // aiming the agent at a further one, so there is no unverified leg left to
+  // walk down. What it does mean is that an agent whose destination is itself
+  // standing inside a body declares arrival up to
+  // `arriveRadius + 2 * bodyRadius` = 0.78m short of it (measured: 0.773m,
+  // with a goal on a body's centre). That is a real slack, and it is smaller
+  // than every tolerance downstream of it — SQUAD.reissueDistance (1.5m),
+  // which is what decides whether a member counts as having arrived, and the
+  // director's extraction radius (3m). A change that tightens either of those
+  // below 0.78m has to revisit this.
   const arriveReach = (self, point) => {
     const occupant = bodyBlocking(self, point.x, point.z);
     if (!occupant) return SIM.arriveRadius;
@@ -409,13 +423,23 @@ export function createWorld(plan, mission, placements = []) {
       const px = self.x + Math.cos(ang) * step;
       const pz = self.z + Math.sin(ang) * step;
       // "Makes headway" is measured as actually ending up closer, not as a
-      // positive dot product with the bearing. The dot is the same test in
-      // exact arithmetic and a different one in floating point: `Math.cos`
-      // of a right angle is 6.1e-17, not 0, so a probe exactly square to the
-      // bearing scored as progress and reported room to go round where there
-      // was none. That is not a rounding nicety — a body directly ahead
-      // leaves precisely the two square directions open, so it fired on the
-      // commonest geometry there is.
+      // positive dot product with the bearing. Those agree only for an
+      // infinitesimal step. For a real one of length `step` toward a waypoint
+      // `glen` away, a probe `t` off the bearing ends up closer only while
+      // cos t > step / (2 * glen) — so every direction in the sliver just
+      // short of square to the bearing leans forward and still finishes
+      // farther away than standing still would.
+      //
+      // That sliver is exactly where it costs something. A body directly
+      // ahead blocks every probe except the ones nearly square to the
+      // bearing, so the dot product finds room to go round precisely when
+      // there is none, and the caller nudges at a gap it can never use
+      // instead of backing off. At a mathematically exact right angle the dot
+      // product is decided by rounding, too — `Math.cos(Math.PI / 2)` is
+      // 6.1e-17 rather than 0, and whether that survives being added to the
+      // agent's own coordinate depends on where the agent happens to be
+      // standing — but the finite-step error above is the substantive one and
+      // is what world.test.js pins.
       if (Math.hypot(toward.x - px, toward.z - pz) >= glen) continue;
       if (!blockedAt(px, pz) && !bodyBlocking(self, px, pz)) return true;
     }

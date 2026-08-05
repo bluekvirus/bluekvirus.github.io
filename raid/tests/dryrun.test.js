@@ -395,38 +395,54 @@ test('no agent is ever left frozen short of its goal', () => {
   // hostage worst still-run 25 (down from 571), global worst 183 — now a SWAT
   // agent, not the hostage — on seed `revD-9-25`.
   //
-  // RE-DERIVED when agents got bodies. Everything above still holds, but the
+  // RE-DERIVED when agents got bodies, and again when the deadlock class
+  // bodies exposed was closed. Everything above still holds, but the
   // arithmetic it rests on changed, and the 400 it produced became a bar this
   // suite could only clear because its seed set is frozen: measured with this
-  // very tracker over 2,500 fresh dryrun-shaped missions, the pre-body figure
-  // of 51 became 501, so a fresh 50-seed family had roughly a 4% chance of
-  // tripping a "passing" build.
+  // very tracker over fresh dryrun-shaped missions, the pre-body figure of 51
+  // became 501, so a fresh 50-seed family had roughly a 4% chance of tripping
+  // a "passing" build.
   //
-  // Two things moved. The recovery cycle is longer: the right-of-way yield
-  // fired zero times in 790,368 pre-body agent-ticks and now fires once or
-  // twice a mission, so the loop is GOAL_STALL_WINDOW (90) + YIELD_TICKS (45)
-  // = 135 ticks, not the 110 the old number was built from. And the loop can
-  // legitimately run several times: two agents contesting one opening take a
-  // round to detect the jam, a round for one to clear it, and a round for the
-  // other to use the space, and each retry is a fresh 135.
+  // The number below has two parts and they are NOT the same kind of thing.
   //
-  // So the property is unchanged — a bounded multiple of a cycle time fixed
-  // by constants, not a number chasing whatever the worst sampled seed did —
-  // but the cycle is 135 and the multiple has to allow real retries. 800 is
-  // 5.9 cycles. Measured over the same 2,500 fresh missions after the body
-  // fixes: worst 528 (seed `dryZ-12-85`, two SWAT in a symmetric stand-off,
-  // 3.9 cycles), 99.9th percentile 320, 99th 198, median 25 — so 800 keeps a
-  // 1.51x margin on the measured worst while staying far below the thousands
-  // of ticks a genuine freeze rides out to (the freezes this round fixed sat
-  // at 1707, 1887 and 11,724).
+  // DERIVED, from the recovery cycle. The right-of-way yield fired zero times
+  // in 790,368 pre-body agent-ticks and now fires once or twice a mission, so
+  // the loop is GOAL_STALL_WINDOW (90) + YIELD_TICKS (45) = 135 ticks, not the
+  // 110 the old number was built from. The old bar was 3.64 of its own cycles
+  // (400 / 110); holding that multiple against the longer cycle carries it to
+  // 400 * 135 / 110 = 491. That is the whole of what the arithmetic gives.
+  // Any bar below 491 would be tighter than the recovery machinery's own
+  // guaranteed worst case and would flap on cycle time alone.
   //
-  // This number scales with SIM.bodyRadius and nothing else here. Measured on
-  // this tree over the same 2,500 fresh missions per radius: 0.15 -> worst
-  // 230 (none over 300), 0.20 -> 325, 0.25 (shipped) -> 528, 0.30 -> 2427
-  // with three missions over 400. If Task 6 lowers the radius, lower this
-  // with it rather than leaving the slack behind; if it raises it past 0.25,
-  // this bar has to be re-derived again, because 0.30 breaches even 800.
-  assert.ok(maxStillRun < 800,
+  // MEASURED HEADROOM, and called that because that is what it is. Over 7,200
+  // fresh dryrun-shaped missions (twelve seed families, room counts 8-12,
+  // driven exactly as main.js drives a mission) the worst still-run on this
+  // tree is 417 ticks, on seed rA-11-82; 99.9th percentile 290, 99th 194,
+  // median 25, three missions over 300 and one over 400. The old bar carried
+  // 2.19x its own measured worst (400 / 183). Holding that same margin gives
+  // 2.19 * 417 = 913, which clears the derived 491 comfortably. So: 491 of
+  // this bar is derived from the cycle time and the remaining 1.86x is
+  // measured headroom at the margin the original bar used. Neither figure is
+  // a chosen multiple dressed up as a derivation.
+  //
+  // This number scales with SIM.bodyRadius and nothing else here. Re-measured
+  // on this tree over the same 7,200 fresh missions per radius — a sample size
+  // chosen because the tail is dominated by rare events that a 1,000-mission
+  // sweep simply does not see, and the two previous attempts at this table
+  // disagreed for exactly that reason:
+  //
+  //   radius  worst  >=300  >=400  >=800  extraction
+  //   0        67      0      0      0     38.8%
+  //   0.15    306      2      0      0     35.4%
+  //   0.20    308      6      0      0     33.8%
+  //   0.25    417      3      1      0     30.5%   (shipped)
+  //   0.30    857      6      2      1     27.1%
+  //
+  // The degradation is monotone in extraction with no cliff, and the tail is
+  // clean up to and including the shipped 0.25. If Task 6 lowers the radius,
+  // lower this with it rather than leaving the slack behind; if it raises it
+  // past 0.25, re-derive, because 0.30 puts a mission back over 800.
+  assert.ok(maxStillRun < 913,
     `${stillAt} held a path with zero displacement for ${maxStillRun} consecutive ticks`);
 });
 

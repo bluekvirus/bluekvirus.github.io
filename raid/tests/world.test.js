@@ -408,6 +408,70 @@ test('right of way is settled against every body in contact, not just the neares
     'the middle agent never gave way to the junior body it was touching — it only looked at its nearest neighbour, which outranks it');
 });
 
+test('a step that only leans toward the waypoint is not room to go round', () => {
+  // Whether an agent can get round a parked body decides whether it gives way
+  // to it, and `canPass` answers by probing sixteen directions and keeping the
+  // ones that still make headway. "Makes headway" has to mean ENDS UP CLOSER,
+  // and not the tempting shorthand of a positive dot product with the bearing.
+  // Those are the same question only for an infinitesimal step. For a real
+  // one of length s toward a waypoint g away, a step off the bearing by angle
+  // t ends up closer only while cos t > s / (2g): everything in the sliver
+  // just short of square to the bearing leans forward and still finishes
+  // farther away than it started.
+  //
+  // The sliver is exactly where it does damage. A body directly ahead blocks
+  // every probe except the two nearly square to the bearing, so the dot
+  // product finds "room to go round" precisely when there is none, and the
+  // agent nudges at a gap it can never use instead of backing off. (At a
+  // mathematically exact right angle the dot product is a coin toss —
+  // `Math.cos(Math.PI / 2)` is 6.1e-17 rather than 0, and whether that
+  // survives being added to the agent's own coordinate depends on where the
+  // agent is standing. This fixture does not rely on that; it sits a clear
+  // 0.7 degrees inside the sliver on both sides.)
+  const w = openRoom([{ x: 5, z: 5 }, { x: 5.505, z: 5 }], 14);
+  const [mover, parked] = w.agents;
+  assert.equal(parked.goal, null, 'test setup: the blocker was given orders');
+  assert.ok(mover.id < parked.id,
+    'test setup: the mover must hold the LOWER id, or the plain id rule would explain the yield');
+  // Clearing a building is done at a run, and the wider the step the wider the
+  // sliver: s / (2g) is 0.0254 here, so the probes that disagree are the ones
+  // between 88.5 and 90 degrees off the bearing.
+  mover.wants = SIM.runSpeed;
+  // The waypoint sits 1.05m away, 0.8 degrees north of the body's bearing —
+  // which puts canPass's due-north probe 89.2 degrees off, inside that sliver.
+  // Far enough out to clear the body (0.545m from its centre), so this is
+  // about `canPass` and not about arriveReach's relaxation.
+  const BEARING = 0.8 * Math.PI / 180;
+  const waypoint = { x: 5 + Math.cos(BEARING) * 1.05, z: 5 + Math.sin(BEARING) * 1.05 };
+  assert.ok(w.setGoal(mover.id, waypoint));
+
+  const step = mover.wants * (1 / 60);
+  const north = { x: mover.x, z: mover.z + step };
+  assert.ok(Math.hypot(north.x - parked.x, north.z - parked.z) > SIM.bodyRadius * 2,
+    'test setup: the due-north probe is inside the body, so no probe is left to disagree about');
+  assert.ok((north.x - mover.x) * (waypoint.x - mover.x) + (north.z - mover.z) * (waypoint.z - mover.z) > 0,
+    'test setup: the due-north probe does not even lean toward the waypoint, so the dot product would reject it too');
+  assert.ok(Math.hypot(waypoint.x - north.x, waypoint.z - north.z)
+    > Math.hypot(waypoint.x - mover.x, waypoint.z - mover.z),
+    'test setup: the due-north probe genuinely ends up closer, so there is nothing for the two tests to disagree about');
+  assert.ok(Math.hypot(waypoint.x - parked.x, waypoint.z - parked.z) > SIM.bodyRadius * 2,
+    'test setup: the waypoint is inside the body, so arriveReach would decide this instead of canPass');
+
+  let yieldedTo = -1;
+  // Short of the third strike (tick 270), where the last-resort rule gives way
+  // whatever `canPass` says and this would stop proving anything.
+  pin(w, 260, () => {
+    // Hold the leg. A goal-strike replan re-plans it round the body, which
+    // would quietly remove the very geometry under test.
+    mover.path = [waypoint];
+    mover.pathIndex = 0;
+    if (mover._yieldTicks > 0 && yieldedTo < 0) yieldedTo = mover._yieldTo;
+  });
+
+  assert.equal(yieldedTo, parked.id,
+    'the mover found "room" to go round in a direction that leans at its waypoint but ends up farther from it than standing still');
+});
+
 test('a replan keeps a short raw lead and smooths the rest of the route', () => {
   // replan() used to return the raw grid route entire and never re-smooth, so
   // an agent that jammed once ran the whole rest of its journey as a
@@ -1075,35 +1139,19 @@ test('a yield ends the moment the agent it is giving way to dies', () => {
     'the agent carried on backing away from a corpse');
 });
 
-test('an agent walks round parked bodies rather than giving way to them', () => {
-  // Giving way to something that will never move buys nothing, and as a
-  // standing policy it live-locks: back off, walk back in, back off again.
-  // Measured on this exact fixture, an unconditional give-way spent 1710 of
-  // 3600 ticks retreating and finished 8.08m short of the goal. Going round
-  // is the answer, and the nudge plus the contact-tangent slide are what do
-  // it — the yield is reserved for the case where there is nowhere to go.
-  const w = openRoom([{ x: 5, z: 5 }, { x: 5.5, z: 5 }, { x: 5.25, z: 5.45 }], 14);
-  const [mover, parkedA, parkedB] = w.agents;
-  const goal = { x: 10, z: 10 };
-  assert.equal(parkedA.goal, null, 'test setup: the first blocker was given orders');
-  assert.equal(parkedB.goal, null, 'test setup: the second blocker was given orders');
-  assert.ok(w.setGoal(mover.id, goal));
-
-  let yieldTicks = 0;
-  for (let i = 0; i < 3600; i++) {
-    w.tick();
-    if (mover._yieldTicks > 0) yieldTicks++;
-  }
-  assert.ok(Math.hypot(mover.x - goal.x, mover.z - goal.z) < 1,
-    `the mover finished ${Math.hypot(mover.x - goal.x, mover.z - goal.z).toFixed(2)}m short — it kept giving way instead of going round`);
-  // Not merely "arrived eventually": arriving while still spending a third of
-  // the run in retreat is the live-lock in slow motion, and would pass a
-  // distance-only check on a longer budget.
-  assert.ok(yieldTicks < 200,
-    `the mover spent ${yieldTicks} of 3600 ticks backing away from bodies that were never going to move`);
-});
-
-
+// DELETED (task 4, fix round 2): 'an agent walks round parked bodies rather
+// than giving way to them'. It was an open-floor fixture — a mover and two
+// parked bodies between it and its goal — asserting that the mover arrived
+// and spent under 200 of 3600 ticks retreating. It passed under the exact
+// sabotage it existed to catch: with the give-way to a parked rival made
+// unconditional, the fixture still gave a final gap of 0.085m and 46 yield
+// ticks, because on open floor the mover barely jams at all (peak 2 strikes)
+// and so barely reaches the escalation the rule lives in. The figures its own
+// comment quoted for that sabotage — "1710 of 3600 ticks retreating, finished
+// 8.08m short" — were measured before the `stationary` rival rule existed and
+// were never re-taken. The property it claimed to protect is covered, on a
+// fixture where the mover genuinely cannot make progress without the rule, by
+// 'a body parked in a doorway can still be squeezed past' below.
 test('a body parked in a doorway can still be squeezed past', () => {
   // The other half of not giving way to a parked obstacle. Retreating from a
   // body standing in a doorway is precisely what stops anyone ever getting
