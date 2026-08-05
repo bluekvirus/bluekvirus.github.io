@@ -1005,33 +1005,47 @@ test('a waypoint that lands inside a body still counts as reached', () => {
     `the walker stopped at z=${walker.z.toFixed(2)} — it never reached the waypoint past the body`);
 });
 
-test('a stand-off partner is one that is standing still, not one with a strike on record', () => {
-  // `_goalStrikes > 0` was the test for "is this agent also getting nowhere",
-  // and it has two blind spots that bodies made reachable. `setGoal` re-arms
-  // the counter, so an agent that IS jammed reads 0 for 90 ticks after every
-  // re-task: measured on seed dryW-11-32, two wedged SWAT had their counters
-  // oscillate 0<->1 as squad.js re-issued their objectives, neither ever
-  // qualified as the other's rival, and neither the nudge nor the yield fired
-  // for 453 ticks. Standing still is the property actually wanted, and
-  // `speed` reports it directly.
+test('being told again where it was already going does not re-arm a jammed agent’s stall ratchet', () => {
+  // setGoal used to wipe `_goalBestDist`, `_goalCountdown`, `_goalStrikes` and
+  // both recovery timers on every single call. squad.js re-issues a member's
+  // objective whenever its slot point drifts (SQUAD.reissueDistance), and
+  // director.js does the same for the hostage, so a wedged agent was handed a
+  // clean bill of health every few tens of ticks against a 90-tick detection
+  // window — and the escalation could never reach the two strikes it needs to
+  // fire at all. Measured on seed dryW-11-32, two SWAT wedged against each
+  // other had their counters oscillate 0<->1 for 453 ticks while squad.js
+  // re-issued their objectives; on this fixture the old code gave
+  // `maxStrikes 0, nudgeTicks 0, yieldTicks 0` over the whole 400 ticks.
+  //
+  // Both agents are re-tasked here, not just one: the defect is on the SELF
+  // side (my own ratchet, wiped by my own caller), and re-tasking only the
+  // neighbour would test the observer side instead.
   const w = openRoom([{ x: 5, z: 5 }, { x: 5.3, z: 5 }]);
   const [low, high] = w.agents;
   w.setGoal(0, { x: 10, z: 10 });
   w.setGoal(1, { x: 10, z: 10 });
 
-  let highYieldedTo = -1;
+  let maxStrikes = 0;
+  let recovered = 0;
   pin(w, 400, (tick) => {
-    // Re-task the LOW id every 60 ticks, exactly as squad.js does. Its strike
-    // counter is wiped each time, so under the old rule it is invisible as a
-    // rival for the 90 ticks that follow — which is every tick.
-    if (tick % 60 === 0) w.setGoal(0, { x: 10 + (tick % 120) / 100, z: 10 });
-    if (high._yieldTicks > 0) highYieldedTo = high._yieldTo;
+    // Every 60 ticks, exactly as squad.js does, and to a destination that
+    // wanders by 0.6m — a slot point drifting as the formation shuffles, not
+    // a new place to be.
+    if (tick % 60 === 0) {
+      const want = { x: 10 + (tick % 120) / 100, z: 10 };
+      w.setGoal(0, want);
+      w.setGoal(1, want);
+    }
+    maxStrikes = Math.max(maxStrikes, low._goalStrikes, high._goalStrikes);
+    if (low._yieldTicks > 0 || low._nudgeTicks > 0
+      || high._yieldTicks > 0 || high._nudgeTicks > 0) recovered++;
   });
 
-  assert.equal(low._goalStrikes, 0,
-    'test setup: the re-tasking did not actually keep the low id’s strike counter down');
-  assert.equal(highYieldedTo, low.id,
-    'the higher id never gave way to a neighbour that was standing perfectly still, because its strike counter kept being re-armed');
+  // Four windows fit in 400 ticks; a ratchet re-armed every 60 reaches none.
+  assert.ok(maxStrikes >= 4,
+    `a permanently jammed agent re-tasked on squad.js's cadence only reached ${maxStrikes} strikes in 400 ticks — setGoal is still wiping the ratchet`);
+  assert.ok(recovered > 0,
+    'neither the nudge nor the yield ever fired, so no recovery was even attempted');
 });
 
 test('a yield ends the moment the agent it is giving way to dies', () => {

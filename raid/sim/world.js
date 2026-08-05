@@ -115,7 +115,8 @@ const CONTACT_SCALE = 1.2;
 // asymmetry happen unnoticed in the first place.
 const resetStallBookkeeping = (a) => {
   a._stallX = a.x; a._stallZ = a.z; a._stallCountdown = STALL_WINDOW; a._stallSawWall = false;
-  a._goalBestDist = Infinity; a._goalCountdown = GOAL_STALL_WINDOW; a._goalStrikes = 0;
+  a._goalBestDist = Infinity; a._goalBestX = a.x; a._goalBestZ = a.z;
+  a._goalCountdown = GOAL_STALL_WINDOW; a._goalStrikes = 0;
   a._nudgeBias = 0; a._nudgeTicks = 0; a._yieldTicks = 0;
 };
 
@@ -173,6 +174,11 @@ export function createWorld(plan, mission, placements = []) {
       // times in a row it hasn't — which is what decides whether a plain
       // replan is enough or a small tie-breaking nudge is warranted too.
       _goalBestDist: Infinity,
+      // Where the agent was standing when it recorded `_goalBestDist`. Only
+      // read by setGoal, to re-measure that record against a re-issued
+      // destination instead of throwing it away (see there).
+      _goalBestX: spawn.x,
+      _goalBestZ: spawn.z,
       _goalCountdown: GOAL_STALL_WINDOW,
       _goalStrikes: 0,
       _nudgeBias: 0,
@@ -249,11 +255,44 @@ export function createWorld(plan, mission, placements = []) {
     // and re-pathing every time a door changes state would thrash.
     const raw = findPath(grid, a, point, () => true);
     if (!raw) { a.goal = null; a.path = null; return false; }
+    // How far the destination itself actually moved. This, and not the fact
+    // that setGoal was called, is what decides whether the goal-stall ratchet
+    // starts again.
+    //
+    // This used to wipe `_goalBestDist`, `_goalCountdown`, `_goalStrikes` and
+    // both recovery timers outright on every call, which handed a jammed
+    // agent a clean bill of health every time its caller repeated itself.
+    // squad.js re-issues an objective whenever its slot point drifts (see
+    // SQUAD.reissueDistance there) and the director does the same for the
+    // hostage, so a wedged agent was being re-armed every ~60 ticks against a
+    // 90-tick detection window: measured, two SWAT wedged against each other
+    // and re-tasked on squad.js's own cadence spent 400 ticks with
+    // `yieldTicks 0, nudgeTicks 0, maxStrikes 0` — neither the nudge nor the
+    // yield could ever fire, because neither agent ever reached a single
+    // strike. Making the caller re-issue less often would be fixing a callee
+    // bug in the caller; it is this function that must tell "sent somewhere
+    // new" apart from "told again where it was already going".
+    //
+    // Carried across by RE-MEASURING the ratchet against the new destination
+    // rather than by comparing the two destinations against a threshold.
+    // `_goalBestDist` is the closest this agent has ever come to its goal, and
+    // `_goalBestX/Z` is where it was standing when it did; re-measuring that
+    // same spot against the new point is what "how close have I already been
+    // to here" means, and it needs no cutoff because it is self-limiting at
+    // both ends. Told again to go where it was already going, the figure comes
+    // back unchanged and the ratchet survives intact. Sent somewhere genuinely
+    // different, the figure comes back as roughly the whole new distance, the
+    // agent beats it on its first step, and the strikes clear — which is
+    // exactly what being sent somewhere new should do. An agent that has never
+    // recorded a best (`Infinity`) keeps Infinity, the "nothing known yet"
+    // value the ratchet starts at.
     a.goal = { x: point.x, z: point.z };
     a.path = smoothPath(grid, raw, () => true);
     a.pathIndex = 0;
     a.waitingFor = -1;
-    a._goalBestDist = Infinity; a._goalCountdown = GOAL_STALL_WINDOW; a._goalStrikes = 0; a._nudgeBias = 0; a._nudgeTicks = 0; a._yieldTicks = 0;
+    if (Number.isFinite(a._goalBestDist)) {
+      a._goalBestDist = Math.hypot(a._goalBestX - point.x, a._goalBestZ - point.z);
+    }
     return true;
   };
 
@@ -532,6 +571,7 @@ export function createWorld(plan, mission, placements = []) {
         const goalDist = Math.hypot(a.x - a.goal.x, a.z - a.goal.z);
         if (goalDist < a._goalBestDist - GOAL_STALL_EPS) {
           a._goalBestDist = goalDist;
+          a._goalBestX = a.x; a._goalBestZ = a.z;
           a._goalCountdown = GOAL_STALL_WINDOW;
           a._goalStrikes = 0;
           a._nudgeBias = 0;
