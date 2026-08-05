@@ -179,14 +179,48 @@ moves with it.
 12,000 was sized against an uncapped 2,500-mission sweep (median 2,688, p90
 5,921, p99 7,544, max 8,619) and the all-time worst run ever observed for this
 squad, 8,757 ticks — a margin of 1.370x. The tail then collapsed when the
-fall-back rule was removed and has stayed collapsed: measured at phase close
-over **28,000 missions**, median **2,343**, p90 3,292, p95 3,622, p99 4,267,
-max **5,154**, giving a margin of **2.33x over the worst observed run** and
-**2.81x over p99**, with **zero timeouts and zero unresolved missions**. The
-spec's own "within 2x is too tight" test is comfortably met. The constant is
-deliberately not lowered to re-tighten it: it is the project's only remaining
-anti-hang bound, cheap headroom on a bound like that is not a defect, and
-lowering it would drag `MAX_TICKS` down with it for no measured gain.
+fall-back rule was removed and has stayed collapsed: over **68,000 missions**
+measured across phase close and its review, median **2,343**, p90 3,292, p95
+3,622, p99 4,267, and p99.9 **4,814** on healthy runs.
+
+**Do not read that margin as slack. `MISSION_LIMIT` is not a backstop against
+a hang class that no longer exists — it is the sole terminator of one that
+still does.**
+
+Seed **`RVX-11-133`** (11 rooms) does not terminate. It is reported as
+`failed` / `timeout` only because this clock fires at 12,000; run against a
+copy of the tree with the clock raised to **200,000 it still has not
+resolved**, with `_goalStrikes` ratcheting monotonically to 2,074 and nudges
+to 2,078. The cause is not body collision. In the extract phase the last
+living SWAT is pinned at `x = 9.0023` bit-identically for the entire run,
+oscillating in `z` between 7.11 and 7.47, with no living agent within 20m and
+no prop within 3m. Its `pathIndex` has advanced past the corner waypoints that
+routed it round a wall, so it steers straight at its goal through the geometry
+the route was shaped to avoid — the corner-cut failure the `arriveReach`
+comment in `world.js` warns about for the body-relaxation case, happening here
+on the plain `arriveRadius` path. The hostage is already at the extraction
+point; only that one wedged member prevents a success.
+
+Rate is roughly **1 in 40,000 missions**, which is why a 28,000-mission sweep
+reported "zero hangs" in good faith and was wrong. Two properties this
+document claims elsewhere are weaker than they read because of it:
+
+- **"A mission always resolves"** is true only in the sense the clock makes it
+  true. Remove or raise `MISSION_LIMIT` and this seed runs forever.
+- **The oscillation guarantee does not cover this.** `dryrun.test.js`'s
+  still-run tracker reads **25** on this mission, because the agent oscillates
+  rather than freezes — precisely the class that file's header names ("an
+  agent that only oscillates must score as badly as one standing perfectly
+  still"), and which is covered only synthetically. `timeout` reachability is
+  likewise covered only synthetically, by spinning the clock.
+
+So the constant is deliberately **not lowered**, and the reasoning is the
+opposite of "cheap headroom": lowering it would convert healthy long missions
+into timeouts *without touching the hang it exists to bound*, and it would
+drag `dryrun.test.js`'s `MAX_TICKS` down in lockstep. The margin to reason
+from is the one over **healthy** completions — about **2.5x** (12,000 /
+4,814 at p99.9) — not a margin over a population that includes a mission with
+no finish line at all.
 
 ### Search
 
@@ -268,7 +302,12 @@ tuning. Criterion met.** Measured at phase close over 10,000 fresh missions
 (two disjoint 5,000-mission families, which agree to within half a point on
 every figure):
 
-| | measured |
+Every row is **SWAT-scoped**, like the two rows that name SWAT explicitly:
+gun-armed hostiles reload too, and counting them raises the first row to 74.5%
+against 73.5% SWAT-only. The squad is what the magazine was sized for, so the
+squad is what these measure.
+
+| | measured (SWAT only) |
 |---|---|
 | Missions with at least one reload | **73.8% / 74.3%** |
 | Reloads per mission | 1.56 / 1.59 |
@@ -544,7 +583,15 @@ constants that measurement later proved inert, and they had to be found by a
 reviewer and reverted. Any constant introduced here that cannot be shown to
 change an outcome should be removed rather than kept.
 
-**All eight test obligations above shipped and pass.** Two notes on how:
+**All eight test obligations above shipped and pass** — but read the second
+one narrowly. "A mission always resolves within `MISSION_LIMIT`" is satisfied
+*by* `MISSION_LIMIT`, on at least one seed that would otherwise never resolve
+at all (see Mission state and termination). The suite cannot currently tell
+those two cases apart, and the two obligations that would — end-to-end
+oscillation detection, and a `timeout` earned by a real mission rather than by
+spinning the clock — are the phase's clearest coverage gap.
+
+Two further notes on how:
 `world.hash()` covers `ammo` *and* `reloadUntil`, for the reason given under
 Ammo and reload; and the collision task's own coverage grew the suite from 162
 to 177 tests, which is where most of the phase's test growth landed. The suite
@@ -628,23 +675,39 @@ Over **10,000 fresh missions** across room counts 8-12, on two disjoint
 below (a further 18,000 missions were run for the radius comparison and the
 melee and recovery probes; 28,000 in total):
 
-| | measured |
-|---|---|
-| Extraction (`success` / `extracted`) | **29.6% / 29.7%** |
-| `squad-lost` | 44.3% / 44.3% |
-| `hostage-killed` | 26.1% / 26.0% |
-| `timeout` | **0 / 0** |
-| Unresolved (hangs) | **0 / 0** |
-| Mean SWAT lost | 2.64 / 2.63 of 4 |
-| Cell coverage | 73.1% / 73.2% |
-| Hostile encounter rate | 58.2% / 58.4% |
-| Mission ticks | median 2,343, p90 3,292, p95 3,622, p99 4,267, max **5,154** |
-| Melee chargers that ever swing | 60.8% / 60.6% (56.0% land a hit) |
-| Missions with a melee swing | 82.3% / 82.0% |
-| Missions with a reload | 73.8% / 74.3% |
-| Right-of-way yields | 0.86 / 0.81 per mission |
-| Tie-break nudges | 0.72 / 0.70 per mission |
-| Worst still-run | 403 ticks over the 16,000 missions at this radius |
+**Rates are stable; tail figures are sample maxima and are labelled as such.**
+Every rate below reproduced within noise on an independent 40,000-mission
+re-measure across five further families. The tail rows did not, and the
+distinction matters more than the numbers do: a rate converges at n=10,000, a
+maximum only ever reports the largest thing that particular sample happened to
+contain. Read every "worst" and "max" here as "the worst seen in n missions",
+never as a bound.
+
+| | measured | n |
+|---|---|---|
+| Extraction (`success` / `extracted`) | **29.6% / 29.7%** | 10,000 |
+| `squad-lost` | 44.3% / 44.3% | 10,000 |
+| `hostage-killed` | 26.1% / 26.0% | 10,000 |
+| Mean SWAT lost | 2.64 / 2.63 of 4 | 10,000 |
+| Cell coverage | 73.1% / 73.2% | 10,000 |
+| Hostile encounter rate | 58.2% / 58.4% | 10,000 |
+| Melee chargers that ever swing | 60.8% / 60.6% (56.0% land a hit) | 10,000 |
+| Missions with a melee swing | 82.3% / 82.0% | 10,000 |
+| Missions with a reload (SWAT only) | 73.8% / 74.3% | 10,000 |
+| Right-of-way yields | 0.86 / 0.81 per mission | 10,000 |
+| Tie-break nudges | 0.72 / 0.70 per mission | 10,000 |
+| Mission ticks | median 2,343, p90 3,292, p95 3,622, p99 4,267 | 68,000 |
+| `timeout` | **1 known**, `RVX-11-133` — see Mission state and termination | 68,000 |
+| Unresolved / non-terminating | **1 known**, the same seed, ~1 in 40,000 | 68,000 |
+| *Sample max*: mission ticks (healthy) | 5,154 at n=28,000; **p99.9 4,814** at n=68,000 | 68,000 |
+| *Sample max*: worst still-run | 403 at n=16,000; **831** at n=40,000 (5 >=440, 3 >=491, 0 >=913) | 56,000 |
+
+The last three rows previously read `timeout | 0`, `unresolved | 0` and
+`worst still-run | 403`, presented as end-state properties. All three were
+contradicted by the larger sample. That is the failure mode this table now
+guards against by construction: **the still-run maximum doubled between
+n=16,000 and n=40,000, and no amount of further sampling would make it a
+property.**
 
 ### The cost, stated plainly
 
@@ -654,7 +717,7 @@ No single change did that, and the spec should not leave a reader to guess:
 | step | extraction | how measured |
 |---|---|---|
 | End of Plan A | 45.9% | n=1,000 |
-| Fall-back rule deleted | ~54% | +6.2 paired, p ≈ 1e-5, n=900 |
+| Fall-back rule deleted | ~54% *(unpaired; the paired delta is +6.2, so 52.1 is the like-for-like endpoint — the two bases differ and the column does not sum through this row)* | +6.2 paired, p ≈ 1e-5, n=900 |
 | Melee survivability | 40-43% | −8.7 to −10.7, n=300 x2 |
 | Ammo and reload | −3.0 | paired, p ≈ 0.10 at n=400 — not significant |
 | Hard body collision | −8.4 | paired, n=4,000 per radius |
@@ -678,6 +741,21 @@ where SWAT always win is as broken as one where they always lose") is met.
 
 ### Known-open, carried out of the phase
 
+- **A non-terminating stall exists: seed `RVX-11-133`.** The headline item, and
+  the only one that is a correctness bug rather than a rough edge. A lone SWAT
+  member cuts a corner past its own route's waypoints in the extract phase and
+  oscillates against the wall forever; `MISSION_LIMIT` is the only thing that
+  ends the mission. Full diagnosis under Mission state and termination. Rate
+  ~1 in 40,000. Two consequences for whoever picks this up: it is a
+  **path-following** defect, not a collision one (no other agent is within
+  20m), and it is **invisible to every stall signal the project has**, because
+  the agent moves the whole time.
+- **The oscillation guarantee has no end-to-end coverage.** `dryrun.test.js`
+  asserts that an oscillating agent scores as badly as a frozen one, and the
+  seed above shows the tracker reading 25 on a mission that never terminates.
+  The property is real but is only exercised synthetically. Same for `timeout`
+  reachability, which is tested by spinning the clock rather than by a mission
+  that earns one.
 - **A reloading shooter stands still.** `world.js`'s gun-halt branch has no
   reload awareness, so a SWAT member that empties a magazine while holding a
   firing position is motionless for the full ~1.85s. This is the mechanism
@@ -688,9 +766,17 @@ where SWAT always win is as broken as one where they always lose") is met.
   means a genuinely re-tasked agent can carry a live yield or nudge into a new
   destination. Measured: of 137,406 `setGoal` calls over 2,000 missions, 85
   (0.06%) land while a yield is live and 50 (0.04%) while a nudge is. Missions
-  where it happens have a *lower* worst still-run and a *higher* extraction
-  rate than those where it does not, so there is no measured cost and it is
-  left alone.
+  where it happens have a *lower* worst still-run (197 vs 338) and a *higher*
+  extraction rate (39.1% vs 29.9%) than those where it does not — **but that
+  comparison is a selection effect, not evidence of no cost, and should not be
+  cited as though it were.** A carry requires a live recovery timer AND a
+  genuine re-task, which is likelier in a long, mobile, still-winnable mission
+  than in one where the squad is already dead; the two groups are not
+  comparable populations. What the numbers do support is a bound on *exposure*
+  — 0.06% of goal issues, 0.16% of live agent-ticks spent yielding at all —
+  and that is the whole basis for leaving it alone. Establishing that the
+  carry is harmless would need a paired A/B against a tree that clears the
+  timers, which was not run.
 - **A one-tick window mismatch between sim and renderer.** `combat.js` treats
   the tick equal to `reloadUntil` as still reloading; `agents.js` treats it as
   finished. Recorded, harmless at 60fps, not changed.

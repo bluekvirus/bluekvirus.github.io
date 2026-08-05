@@ -411,8 +411,22 @@ test('no agent is ever left frozen short of its goal', () => {
   // 110 the old number was built from. The old bar was 3.64 of its own cycles
   // (400 / 110); holding that multiple against the longer cycle carries it to
   // 400 * 135 / 110 = 491. That is the whole of what the arithmetic gives.
-  // Any bar below 491 would be tighter than the recovery machinery's own
-  // guaranteed worst case and would flap on cycle time alone.
+  //
+  // AND 491 IS NOT A FLOOR. The sentence that used to stand here — "any bar
+  // below 491 would be tighter than the recovery machinery's own guaranteed
+  // worst case" — is withdrawn as an over-claim, on evidence: a 40,000-mission
+  // re-measure breached 491 three times (below). Only the 135 is derived. It
+  // is ONE cycle: detect no progress (90), then yield (45). The 3.64 that
+  // multiplies it is not derived from anything — it is the pre-body bar's own
+  // empirical ratio (400 / 110), carried across, so 491 is a scaled sample
+  // multiple wearing a derivation's clothes. Nothing in the machinery bounds a
+  // recovery to 3.64 cycles: the nudge escalates until it reaches its 1.5 cap,
+  // the last-resort tier waits for three strikes, and a knot that needs more
+  // cycles simply takes more. The measured worst of 831 is 6.16 cycles, which
+  // is the machinery working slowly, not failing — but "slowly" has no
+  // arithmetic ceiling, and this comment should never have implied one.
+  // What 135 genuinely licenses is only this: a bar below ~135 would flap on
+  // one cycle of ordinary recovery.
   //
   // MEASURED HEADROOM, and called that because that is what it is. Over 7,200
   // fresh dryrun-shaped missions (twelve seed families, room counts 8-12,
@@ -425,18 +439,37 @@ test('no agent is ever left frozen short of its goal', () => {
   // measured headroom at the margin the original bar used. Neither figure is
   // a chosen multiple dressed up as a derivation.
   //
-  // 417 IS A SAMPLE MAXIMUM, NOT A BOUND, and the 1.86x above is only as good
-  // as that sample. It has already been beaten once: an independent 7,200-
-  // mission re-measure at this same radius reached 440 (p99.9 289, zero >=800,
-  // zero unresolved). Task 6 then re-measured over 16,000 further fresh
-  // missions on four disjoint families (`T6a`/`T6b`/`T6c`/`T6r`, 8-12 rooms,
-  // driven exactly as main.js drives a mission) and got a worst of 403
-  // (`T6a-10-980`, a SWAT agent), p99.9 251, p99 194, median 25, three
-  // missions >=300, one >=400, none >=491 — so that sweep did not breach the
-  // anchor either, but it does not raise it above 440 as a known worst. The
-  // bar keeps 2.07x over 440 and 2.26x over 403. Treat any future sample that
-  // exceeds 440 as a defect to investigate before it is treated as a reason
-  // to move this number.
+  // THAT 1.86x NO LONGER EXISTS, AND 417 WAS ONLY EVER A SAMPLE MAXIMUM. The
+  // anchor has been beaten three times over, each time by a larger sample, and
+  // the honest current figure is much tighter than any version of this comment
+  // has claimed:
+  //
+  //   sample                          worst  >=440  >=491  >=913
+  //   7,200 missions (bar's anchor)    417      0      0      0
+  //   7,200 fresh (Task 4 re-review)   440      1      0      0
+  //   16,000 fresh (Task 6 sweep)      403      0      0      0
+  //   40,000 fresh (Task 6 review)     831      5      3      0
+  //
+  // The 40,000-mission sample is the one to plan against: worst **831**
+  // (`RVQ-11-1139`, a hostile, reproduced twice), then 664 (`RVP-12-1432`),
+  // 521 (`RVQ-11-549`), 484 (`RVZ-9-703`), 466 (`RVP-10-74`); p99.9 289, p99
+  // 197, median 25. Nothing reached 913. So the bar's real margin over the
+  // known worst is **1.10x, not the 2.07x an earlier draft of this paragraph
+  // claimed** — that figure was computed against 440 while a 40,000-mission
+  // sample already put the worst at 831, and it is withdrawn.
+  //
+  // THE BAR ITSELF DOES NOT MOVE, in either direction. Up would be the exact
+  // move this plan already had to reject once — raising a threshold instead of
+  // meeting it — and 913 is still unbreached across every sample ever taken,
+  // ~70,000 missions. Down is unjustified for the same reason: the derived
+  // floor above turned out not to be a floor. What was wrong here was never
+  // the number; it was the property claimed around it. This test runs a fixed
+  // 50-seed set (peaks at 27), so CI cannot flap on any of this — which is
+  // exactly why the documented property has to carry the honest tail, since
+  // the assertion will never surface it.
+  //
+  // Treat a sample that exceeds 831 as a defect to investigate before it is
+  // treated as a reason to move this number.
   //
   // This number scales with SIM.bodyRadius and nothing else here. Re-measured
   // on this tree over the same 7,200 fresh missions per radius — a sample size
@@ -475,9 +508,11 @@ test('no agent is ever left frozen short of its goal', () => {
   // a property of the radius, and is withdrawn.
   //
   // What survives, and what to act on: extraction degrades monotonically with
-  // the radius with no cliff, and the tail at and below the shipped 0.25 is
-  // clean (no mission of the 16,000 measured at 0.25 reached even the derived
-  // 491). If Task 6 or later lowers the radius, lower this bar with it rather
+  // the radius with no cliff. NOTHING here licenses a claim about the tail at
+  // any radius, including the shipped one — a later 40,000-mission sample at
+  // 0.25 reached 831, so the "the 0.25 tail is clean" reading these columns
+  // invite is a 4,000-mission artefact in exactly the way 0.30's retracted
+  // ">=800" row was. If Task 6 or later lowers the radius, lower this bar with it rather
   // than leaving the slack behind; if it raises it past 0.25, re-derive from a
   // fresh sample rather than from this table, whose tail columns are too
   // thinly sampled to extrapolate from.
