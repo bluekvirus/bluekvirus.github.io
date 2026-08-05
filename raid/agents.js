@@ -86,13 +86,12 @@ function makeRig(figure, scene) {
   const groups = Object.fromEntries(CLIP_NAMES.map((n) => [n, figure.groups.find((g) => g.name === n)]));
   // The pack ships no reload clip, so this one is authored at runtime against
   // this figure's own skeleton — see reload-clip.js. It can come back null on a
-  // rig that lacks the bones or the pose source it keys against; every lookup
-  // downstream already tolerates a missing group (`groups.find(...)` here can
-  // return undefined for an imported clip too, and crossfade guards `if (!g)
-  // continue`), so such a figure just falls through to the next clip in
-  // combatClip's priority order rather than freezing.
+  // rig that lacks the bones or the pose source it keys against, which is why
+  // combatClip's reload branch is gated on `durations.Rifle_Reload > 0` (see
+  // there): crossfade's `if (!g) continue` alone would NOT make such a figure
+  // fall through, it would leave it playing nothing at all.
   const reloadGroup = buildReloadClip(figure.skeleton, scene);
-  groups.Rifle_Reload = reloadGroup ?? undefined;
+  groups.Rifle_Reload = reloadGroup;
   return {
     groups,
     // Owned by this rig, unlike every other group here — those belong to the
@@ -217,7 +216,21 @@ function combatClip(agent, ticks, durations, latch) {
   // Below flinch, so a hit landing mid-reload still registers. `reloadUntil`
   // is a tick stamp (-1 when idle, never a duration) and is only ever set on
   // gun agents, so a melee agent can never take this branch.
-  if (agent.reloadUntil > ticks) return 'Rifle_Reload';
+  //
+  // The `durations` term is what makes "a rig without this clip falls through
+  // to the next branch" actually true, and it is here for the same reason the
+  // `HitRecieve` branch above carries one: `clipDurationTicks` returns 0 for a
+  // missing group, so a rig whose `buildReloadClip` came back null measures 0
+  // and never requests a clip it does not have. Returning the name
+  // unconditionally would NOT fall through — `crossfade` skips the absent
+  // group and drives every other group to weight 0, stopping each as it lands,
+  // so the figure would play nothing at all for the whole 108-tick window and
+  // hold its last-written pose (or bind pose, if this were its first clip:
+  // `rig.started` is set before the skip). Unreachable with the shipped assets
+  // — all three models have every bone and an `Idle_Gun` to key against — but
+  // the freeze is exactly what this branch claims to avoid, so it is gated
+  // rather than asserted.
+  if (agent.reloadUntil > ticks && durations.Rifle_Reload > 0) return 'Rifle_Reload';
 
   if (agent.firedAt >= 0 && agent.firedAt !== latch.firedAt) {
     // A new attack (hit or miss — `attack()` sets `firedAt` regardless)
