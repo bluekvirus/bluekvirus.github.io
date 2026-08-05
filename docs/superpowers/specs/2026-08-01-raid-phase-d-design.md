@@ -497,9 +497,13 @@ up in doorways and die there.
 The still-run column is **not** a reliable function of the radius and should
 not be read as one: at 4,000 missions a radius it is not even monotone, being
 set by events rare enough that a four-figure sample resolves their order as
-noise. Over 16,000 missions at the shipped 0.25, the worst is 403 ticks and
-nothing reaches 491. Overlap is exactly 0.000m — the hard constraint itself
-never leaks.
+noise. That caution applies to this section's own earlier figure: a
+16,000-mission sample put the worst at 403 ticks with nothing reaching 491,
+and a 40,000-mission sample at the same shipped 0.25 put it at 831, with five
+missions over 440 and three over 491. Both are sample maxima; the larger one
+governs. See the final measured end state below, and the derivation note in
+`raid/tests/dryrun.test.js` for why 491 turned out not to be a floor. Overlap
+is exactly 0.000m — the hard constraint itself never leaks.
 
 The three constant relationships above are asserted in `world.test.js`, and
 `arriveReach` had to be added so a waypoint that lands inside a living body is
