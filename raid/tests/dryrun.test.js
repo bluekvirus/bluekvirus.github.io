@@ -425,6 +425,19 @@ test('no agent is ever left frozen short of its goal', () => {
   // measured headroom at the margin the original bar used. Neither figure is
   // a chosen multiple dressed up as a derivation.
   //
+  // 417 IS A SAMPLE MAXIMUM, NOT A BOUND, and the 1.86x above is only as good
+  // as that sample. It has already been beaten once: an independent 7,200-
+  // mission re-measure at this same radius reached 440 (p99.9 289, zero >=800,
+  // zero unresolved). Task 6 then re-measured over 16,000 further fresh
+  // missions on four disjoint families (`T6a`/`T6b`/`T6c`/`T6r`, 8-12 rooms,
+  // driven exactly as main.js drives a mission) and got a worst of 403
+  // (`T6a-10-980`, a SWAT agent), p99.9 251, p99 194, median 25, three
+  // missions >=300, one >=400, none >=491 — so that sweep did not breach the
+  // anchor either, but it does not raise it above 440 as a known worst. The
+  // bar keeps 2.07x over 440 and 2.26x over 403. Treat any future sample that
+  // exceeds 440 as a defect to investigate before it is treated as a reason
+  // to move this number.
+  //
   // This number scales with SIM.bodyRadius and nothing else here. Re-measured
   // on this tree over the same 7,200 fresh missions per radius — a sample size
   // chosen because the tail is dominated by rare events that a 1,000-mission
@@ -438,10 +451,36 @@ test('no agent is ever left frozen short of its goal', () => {
   //   0.25    417      3      1      0     30.5%   (shipped)
   //   0.30    857      6      2      1     27.1%
   //
-  // The degradation is monotone in extraction with no cliff, and the tail is
-  // clean up to and including the shipped 0.25. If Task 6 lowers the radius,
-  // lower this with it rather than leaving the slack behind; if it raises it
-  // past 0.25, re-derive, because 0.30 puts a mission back over 800.
+  // Task 6 re-ran that table on a fifth, disjoint family (`T6r`, 4,000
+  // missions per radius, the SAME seeds at every radius so the columns are
+  // paired), and what reproduces is narrower than the row above implies:
+  //
+  //   radius  worst  >=300  >=400  >=800  extraction
+  //   0        85      0      0      0     37.98%
+  //   0.15    290      0      0      0     33.65%
+  //   0.20    402      4      1      0     32.38%
+  //   0.25    295      0      0      0     29.55%   (shipped)
+  //   0.30    381      5      0      0     27.10%
+  //
+  // EXTRACTION reproduces exactly, and is what the table is actually good
+  // for: strictly monotone in the radius, ~3 points per 0.05m, no cliff
+  // anywhere, and 0.30's 27.1% lands on the earlier sample's 27.1% to the
+  // decimal. THE STILL-RUN TAIL DOES NOT reproduce, in either direction: at
+  // 4,000 missions a radius it is not even monotone (0.20 gives the worst run
+  // of the five, above both 0.25 and 0.30), because it is set by events rare
+  // enough that a four-figure sample resolves their ORDER as noise. In
+  // particular 0.30 produced no mission over 800 here, and none in a separate
+  // 7,200-mission re-measure either, so the claim this comment used to make —
+  // that "0.30 puts a mission back over 800" — is a single sample's tail, not
+  // a property of the radius, and is withdrawn.
+  //
+  // What survives, and what to act on: extraction degrades monotonically with
+  // the radius with no cliff, and the tail at and below the shipped 0.25 is
+  // clean (no mission of the 16,000 measured at 0.25 reached even the derived
+  // 491). If Task 6 or later lowers the radius, lower this bar with it rather
+  // than leaving the slack behind; if it raises it past 0.25, re-derive from a
+  // fresh sample rather than from this table, whose tail columns are too
+  // thinly sampled to extrapolate from.
   assert.ok(maxStillRun < 913,
     `${stillAt} held a path with zero displacement for ${maxStillRun} consecutive ticks`);
 });
